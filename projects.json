@@ -1,0 +1,64 @@
+[
+  {
+    "id": "p_001",
+    "name": "Nordic Minimalist Pot",
+    "description": "A clean, tapered pot with a matching deep saucer.",
+    "updatedAt": "2 mins ago",
+    "params": {
+      "mode": "pot",
+      "profile": "standard",
+      "height": 14,
+      "radiusTop": 12,
+      "radiusBottom": 9,
+      "thickness": 0.6,
+      "potFloorThickness": 0.8,
+      "saucerHeight": 3,
+      "saucerGap": 0.3,
+      "saucerSlope": 10,
+      "rimAngle": 5,
+      "color": "#e2e8f0"
+    }
+  },
+  {
+    "id": "s_002",
+    "name": "Art Deco Tulip Shade",
+    "description": "An elegant, fluted light shade with a tulip profile.",
+    "updatedAt": "1 hour ago",
+    "params": {
+      "mode": "shade",
+      "profile": "tulip",
+      "height": 18,
+      "radiusTop": 6,
+      "radiusBottom": 14,
+      "thickness": 0.3,
+      "curvature": 2.5,
+      "curveBias": 0.4,
+      "ribCount": 16,
+      "ribAmplitude": 0.4,
+      "twist": 0,
+      "color": "#ffedd5",
+      "enableSuspension": true,
+      "suspensionHoleSize": 4.2
+    }
+  },
+  {
+    "id": "p_003",
+    "name": "Twisted Vortex Vase",
+    "description": "A complex geometry test with high twist and ribbing.",
+    "updatedAt": "1 day ago",
+    "params": {
+      "mode": "pot",
+      "profile": "elliptic",
+      "height": 22,
+      "radiusTop": 8,
+      "radiusBottom": 7,
+      "thickness": 0.5,
+      "curvature": 3,
+      "twist": 90,
+      "ribCount": 8,
+      "ribAmplitude": 1.5,
+      "color": "#3b82f6",
+      "drainageHoleSize": 0
+    }
+  }
+]
