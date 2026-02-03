@@ -147,9 +147,13 @@ const calculatePointData = (
     baseRadius += w * tFlare * tFlare;
   }
 
-  // 4. VERTICAL RIPPLES (Applied to absolute Y)
-  if (rippleAmplitude > 0) {
-    baseRadius += rippleAmplitude * Math.sin(t * rippleFrequency * Math.PI * 2);
+  // 4. VERTICAL RIPPLES (Applied to absolute Y) — clamped for 35deg FDM overhang
+  if (rippleAmplitude > 0 && rippleFrequency > 0) {
+    // Max slope from ripple: amplitude * frequency * 2π / height
+    // Constraint: slope <= tan(35°) so ripples stay printable without supports
+    const maxRippleAmp = Math.tan(35 * Math.PI / 180) * h / (rippleFrequency * 2 * Math.PI);
+    const effectiveAmp = Math.min(rippleAmplitude, maxRippleAmp);
+    baseRadius += effectiveAmp * Math.sin(t * rippleFrequency * Math.PI * 2);
   }
 
   // 5. TWIST (Modifies Angle)
@@ -602,20 +606,25 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
            addQuad(hubOuterBottom[j], hubOuterBottom[j+1], hubOuterTop[j+1], hubOuterTop[j], true); 
        }
 
-       // --- B. GENERATE SPOKES (From Hub Outer to Wall) ---
+       // --- B. GENERATE ARCHED SPOKES (Hub → Wall, self-supporting for FDM) ---
+       // Spokes use radial subdivisions with a power-curve arch so the geometry
+       // is steep (nearly vertical) at the hub and gentle at the wall.
+       // This ensures every layer during FDM printing has minimal overhang.
        const arms = Math.max(2, Math.min(12, suspensionRibCount || 4));
        const armWidthDeg = Math.max(5, Math.min(90, suspensionRibWidth || 40));
        const armWidthRad = armWidthDeg * (Math.PI / 180);
-       const segmentsPerArm = Math.max(2, Math.floor(radialSegments / arms * (armWidthDeg / 360))); 
+       const segmentsPerArm = Math.max(2, Math.floor(radialSegments / arms * (armWidthDeg / 360)));
 
        // Constants for radial scanning
        const tanA = Math.tan(angleRad);
        const dr = 0.05; // 0.5mm step resolution
        const maxScanR = Math.max(rT, rB) * 1.5; // Max bounds
 
-       // Angular sweep for conservative wall sampling:
-       // Check at least half a rib wavelength on each side so rib peaks are never missed.
-       // Also covers twist-induced rib rotation across the spoke's height range.
+       // Arch parameters
+       const RADIAL_STEPS = 6; // Subdivisions from hub to wall
+       const ARCH_POWER = 0.55; // <1 = steep at hub, gentle at wall
+
+       // Angular sweep for conservative wall sampling
        const ribHalfWave = params.ribCount > 0 ? Math.PI / Math.max(1, params.ribCount) : 0;
        const sweepHalf = Math.max(0.15, ribHalfWave, armWidthRad * 0.5);
        const sweepStep = Math.max(0.03, sweepHalf / 6); // ~6 samples per side
@@ -623,28 +632,22 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
        for (let k = 0; k < arms; k++) {
            const centerTheta = (k / arms) * Math.PI * 2;
            const startTheta = centerTheta - (armWidthRad / 2);
+           const hubOuterR = holeRadius + rimW - 0.05;
 
-           const armOuterBottom: number[] = [];
-           const armOuterTop: number[] = [];
-           const armInnerBottom: number[] = [];
-           const armInnerTop: number[] = [];
+           // --- Phase 1: Scanner — find collisionR per angular segment ---
+           const collisionRs: number[] = [];
 
            for (let s = 0; s <= segmentsPerArm; s++) {
                const theta = startTheta + (s / segmentsPerArm) * armWidthRad;
-               const hubOuterR = holeRadius + rimW - 0.05;
 
-               // --- RADIAL WALL SCANNER (multi-angle conservative) ---
-               // Scan outward, checking the wall at multiple angles around theta
-               // so twist + ribs never create a spoke that pierces the outer shell.
+               // RADIAL WALL SCANNER (multi-angle conservative)
                let collisionR = hubOuterR;
                let foundInnerWall = false;
 
                for (let r = hubOuterR; r < maxScanR; r += dr) {
                    const yBot = centerHoleY - (r - holeRadius) * tanA;
-
                    if (yBot < 0 || yBot > h) { collisionR = r; foundInnerWall = true; break; }
 
-                   // Sample wall at multiple angles — take the innermost (most conservative) limit
                    let innermost = Infinity;
                    for (let dTheta = -sweepHalf; dTheta <= sweepHalf; dTheta += sweepStep) {
                        const p = calculatePointData(yBot, theta + dTheta, params);
@@ -659,74 +662,113 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
                    }
                }
 
-               // --- CONVERGENT HARD CLAMP (wide angular sweep) ---
-               // Iterate to refine, sampling the full rib wavelength so no peak is missed.
+               // CONVERGENT HARD CLAMP (wide angular sweep)
                if (foundInnerWall) {
                    let desiredR = collisionR + anchorDepth;
-
-                   for(let iter=0; iter<3; iter++) {
+                   for (let iter = 0; iter < 3; iter++) {
                        const yBotAtTip = centerHoleY - (desiredR - holeRadius) * tanA;
                        const yTopAtTip = yBotAtTip + suspThick;
 
-                       // Sweep across the full angular band
                        let strictestLimit = Infinity;
                        for (let dTheta = -sweepHalf; dTheta <= sweepHalf; dTheta += sweepStep) {
                            const checkTheta = theta + dTheta;
                            const pBot = calculatePointData(yBotAtTip, checkTheta, params);
                            const pTop = calculatePointData(yTopAtTip, checkTheta, params);
                            const limit = Math.min(pBot.r, pTop.r);
-                           if(limit < strictestLimit) strictestLimit = limit;
+                           if (limit < strictestLimit) strictestLimit = limit;
                        }
 
                        const hardLimitR = strictestLimit - safetyMargin;
-                       if (desiredR > hardLimitR) {
-                           desiredR = hardLimitR;
-                       }
+                       if (desiredR > hardLimitR) desiredR = hardLimitR;
                    }
-
-                   collisionR = desiredR;
+                   collisionRs.push(desiredR);
                } else {
-                   collisionR = maxScanR;
+                   collisionRs.push(maxScanR);
+               }
+           }
+
+           // --- Phase 2: Generate 2D vertex grid with arch curve ---
+           // armGrid[s][r] = { bot: vertexIndex, top: vertexIndex }
+           // s = angular segment (0..segmentsPerArm), r = radial step (0..RADIAL_STEPS)
+           // r=0 is hub end, r=RADIAL_STEPS is wall end
+           const armGrid: { bot: number; top: number }[][] = [];
+
+           for (let s = 0; s <= segmentsPerArm; s++) {
+               const theta = startTheta + (s / segmentsPerArm) * armWidthRad;
+               const wallR = collisionRs[s];
+
+               // Hub end Y (linear at hub outer edge)
+               const hubDistFromHole = hubOuterR - holeRadius;
+               const hubY = centerHoleY - hubDistFromHole * tanA;
+               // Wall end Y (linear at wall)
+               const wallY = centerHoleY - (wallR - holeRadius) * tanA;
+
+               const radialRow: { bot: number; top: number }[] = [];
+
+               for (let r = 0; r <= RADIAL_STEPS; r++) {
+                   const t = r / RADIAL_STEPS; // 0 at hub, 1 at wall
+                   const archT = Math.pow(Math.max(0.001, t), ARCH_POWER); // power curve
+
+                   const rPos = hubOuterR + (wallR - hubOuterR) * t; // linear radial
+                   const yPos = hubY + (wallY - hubY) * archT; // arched Y
+
+                   vertices.push(rPos * Math.cos(theta), yPos, rPos * Math.sin(theta));
+                   const botIdx = vertexIndex++;
+                   vertices.push(rPos * Math.cos(theta), yPos + suspThick, rPos * Math.sin(theta));
+                   const topIdx = vertexIndex++;
+
+                   radialRow.push({ bot: botIdx, top: topIdx });
                }
 
-               // --- Generate Vertices using validated collisionR ---
-               const finalY = centerHoleY - (collisionR - holeRadius) * tanA;
-               
-               // Outer (Wall Interface)
-               vertices.push(collisionR * Math.cos(theta), finalY, collisionR * Math.sin(theta));
-               armOuterBottom.push(vertexIndex++);
-               vertices.push(collisionR * Math.cos(theta), finalY + suspThick, collisionR * Math.sin(theta));
-               armOuterTop.push(vertexIndex++);
-               
-               // Inner (Hub Interface)
-               const distHub = hubOuterR - holeRadius;
-               const dyHubLocal = distHub * tanA;
-               const hubY = centerHoleY - dyHubLocal;
-
-               vertices.push(hubOuterR * Math.cos(theta), hubY, hubOuterR * Math.sin(theta));
-               armInnerBottom.push(vertexIndex++);
-               vertices.push(hubOuterR * Math.cos(theta), hubY + suspThick, hubOuterR * Math.sin(theta));
-               armInnerTop.push(vertexIndex++);
+               armGrid.push(radialRow);
            }
 
-           // --- BUILD FACES FOR THIS ARM ---
+           // --- Phase 3: Build faces ---
+           // Bottom and top surfaces (quad strips across angular × radial)
            for (let s = 0; s < segmentsPerArm; s++) {
-               addQuad(armOuterBottom[s], armOuterBottom[s+1], armInnerBottom[s+1], armInnerBottom[s], true); // Bot
-               addQuad(armOuterTop[s], armOuterTop[s+1], armInnerTop[s+1], armInnerTop[s]); // Top
-               addQuad(armInnerBottom[s], armInnerBottom[s+1], armInnerTop[s+1], armInnerTop[s]); // Inner Cap
-               addQuad(armOuterBottom[s], armOuterBottom[s+1], armOuterTop[s+1], armOuterTop[s], true); // Outer Cap (Hidden in wall)
+               for (let r = 0; r < RADIAL_STEPS; r++) {
+                   // Bottom face (facing down)
+                   addQuad(
+                       armGrid[s][r].bot, armGrid[s+1][r].bot,
+                       armGrid[s+1][r+1].bot, armGrid[s][r+1].bot,
+                       true
+                   );
+                   // Top face (facing up)
+                   addQuad(
+                       armGrid[s][r].top, armGrid[s+1][r].top,
+                       armGrid[s+1][r+1].top, armGrid[s][r+1].top
+                   );
+               }
            }
-           
-           // D. SIDE WALLS (Caps for Venting)
-           addQuad(
-               armOuterBottom[0], armInnerBottom[0], 
-               armInnerTop[0], armOuterTop[0]
-           ); 
-           const last = segmentsPerArm;
-           addQuad(
-               armOuterBottom[last], armOuterTop[last],
-               armInnerTop[last], armInnerBottom[last]
-           );
+
+           // Hub edge cap (r=0, inner edge connecting to hub ring)
+           for (let s = 0; s < segmentsPerArm; s++) {
+               addQuad(
+                   armGrid[s][0].bot, armGrid[s+1][0].bot,
+                   armGrid[s+1][0].top, armGrid[s][0].top
+               );
+           }
+
+           // Wall edge cap (r=RADIAL_STEPS, embedded in wall)
+           for (let s = 0; s < segmentsPerArm; s++) {
+               addQuad(
+                   armGrid[s][RADIAL_STEPS].bot, armGrid[s+1][RADIAL_STEPS].bot,
+                   armGrid[s+1][RADIAL_STEPS].top, armGrid[s][RADIAL_STEPS].top,
+                   true
+               );
+           }
+
+           // Side walls (vent caps at s=0 and s=last)
+           for (let r = 0; r < RADIAL_STEPS; r++) {
+               addQuad(
+                   armGrid[0][r].bot, armGrid[0][r+1].bot,
+                   armGrid[0][r+1].top, armGrid[0][r].top
+               );
+               addQuad(
+                   armGrid[segmentsPerArm][r].bot, armGrid[segmentsPerArm][r].top,
+                   armGrid[segmentsPerArm][r+1].top, armGrid[segmentsPerArm][r+1].bot
+               );
+           }
        }
     }
   }

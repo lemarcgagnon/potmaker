@@ -418,6 +418,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport })
                      <p className="text-[10px] uppercase text-gray-500 font-bold mb-2 mt-2">Horizontal Ripples</p>
                      <DualInput label="Amplitude" value={params.rippleAmplitude} min={0} max={1.0} step={0.05} onChange={(v) => update('rippleAmplitude', v)} unit="cm" displayUnit={displayUnit} />
                      <DualInput label="Frequency" value={params.rippleFrequency} min={1} max={40} step={1} onChange={(v) => update('rippleFrequency', v)} />
+                     {params.rippleAmplitude > 0 && params.rippleFrequency > 0 && (() => {
+                        const maxAmp = Math.tan(35 * Math.PI / 180) * params.height / (params.rippleFrequency * 2 * Math.PI);
+                        return params.rippleAmplitude > maxAmp ? (
+                           <p className="text-[10px] text-amber-400 mt-1">
+                              Clamped to {(maxAmp * (displayUnit === 'mm' ? 10 : displayUnit === 'in' ? 1/2.54 : 1)).toFixed(2)}{displayUnit} (35deg overhang limit)
+                           </p>
+                        ) : null;
+                     })()}
                      <DualInput label="Steps (Terrace)" value={params.stepCount} min={0} max={30} step={1} onChange={(v) => update('stepCount', v)} />
                   </div>
               </AccordionSection>
