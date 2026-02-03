@@ -40,6 +40,9 @@ export interface DesignParams {
   suspensionRibWidth: number; // Width of each arm in degrees
   suspensionRimWidth: number; // Width of the solid inner ring (hub)
   suspensionAnchorDepth: number; // How deep (in mm) the arm tries to embed into the wall
+  suspensionArchPower: number; // Arch curve power (0.1–1.0). Lower = more dramatic arch
+  suspensionButtressExtent: number; // How far hub bridges extend outward between spokes (cm)
+  suspensionButtressArc: number; // Shape exponent (0.3–3.0). Lower = wider arch, higher = narrower
 
   // Saucer Configuration
   saucerHeight: number;
@@ -106,6 +109,9 @@ export const DEFAULT_PARAMS: DesignParams = {
   suspensionRibWidth: 40,
   suspensionRimWidth: 1.0, // 1cm solid hub
   suspensionAnchorDepth: 0.2, // 2mm embed default
+  suspensionArchPower: 0.35, // Pronounced arch by default
+  suspensionButtressExtent: 0.3, // Small corner fillets
+  suspensionButtressArc: 0.5, // Moderate arch shape
 
   // Saucer Defaults
   saucerHeight: 2.0,

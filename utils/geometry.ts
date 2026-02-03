@@ -565,34 +565,93 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
        const angleRad = (suspensionAngle || 45) * (Math.PI / 180);
        const rimW = Math.max(0.1, suspensionRimWidth || 1.0); // Solid Hub Width
        
-       const anchorDepth = suspensionAnchorDepth !== undefined ? suspensionAnchorDepth : 0.2; 
-       const safetyMargin = 0.05; 
+       const anchorDepth = suspensionAnchorDepth !== undefined ? suspensionAnchorDepth : 0.2;
+       const safetyMargin = 0.05;
 
        // Pre-calculate Hub Heights
        // Hub Inner (at hole)
-       const hubInnerY = centerHoleY; 
+       const hubInnerY = centerHoleY;
        // Hub Outer (at hole + rim)
        const dyHub = rimW * Math.tan(angleRad);
        const hubOuterY = centerHoleY - dyHub;
 
+       // Pre-compute spoke layout (needed for corner arches in hub ring)
+       const arms = Math.max(2, Math.min(12, suspensionRibCount || 4));
+       const armWidthDeg = Math.max(5, Math.min(90, suspensionRibWidth || 40));
+       const armWidthRad = armWidthDeg * (Math.PI / 180);
+       const halfArm = armWidthRad / 2;
+       const gapSpan = (2 * Math.PI / arms) - armWidthRad;
+       const halfGap = Math.max(0.01, gapSpan / 2);
+
+       // Corner arch parameters
+       const archDrop = params.suspensionButtressExtent ?? 1.5;
+       const archCurvePow = Math.max(0.3, Math.min(3.0, params.suspensionButtressArc ?? 1.0));
+
+       // Compute arch offset at any angle — smoothly drops below hub ring
+       // near spoke edges, zero at spoke centers and at vent-gap midpoints.
+       const getArchOffset = (theta: number): number => {
+           if (archDrop <= 0 || gapSpan <= 0.01) return 0;
+
+           // Find signed distance to nearest spoke edge
+           // Positive = in vent gap, Negative = inside spoke
+           let minSignedDist = Infinity;
+           for (let kk = 0; kk < arms; kk++) {
+               const center = (kk / arms) * Math.PI * 2;
+               // Signed angular distance from spoke center
+               let d = ((theta - center) % (Math.PI * 2) + Math.PI * 3) % (Math.PI * 2) - Math.PI;
+               const edgeDist = Math.abs(d) - halfArm; // >0 outside, <0 inside
+               if (Math.abs(edgeDist) < Math.abs(minSignedDist)) {
+                   minSignedDist = edgeDist;
+               }
+           }
+
+           if (minSignedDist >= halfGap) return 0; // at or past mid-gap
+
+           if (minSignedDist <= 0) {
+               // Inside spoke — smooth transition zone near the edge
+               const transZone = halfArm * 0.3;
+               if (-minSignedDist > transZone) return 0;
+               const t = 1 - (-minSignedDist / transZone);
+               return archDrop * t * t; // quadratic ease-in
+           }
+
+           // In vent gap — arch rises from max drop to zero at mid-gap
+           const frac = minSignedDist / halfGap;
+           const rise = Math.pow(Math.sin(Math.PI / 2 * frac), archCurvePow);
+           return archDrop * (1 - rise);
+       };
+
        // --- A. GENERATE SOLID HUB RING (360 degrees) ---
+       // The outer bottom edge incorporates corner arches — it dips down
+       // near spoke edges, forming self-supporting brackets for FDM printing.
        const hubOuterBottom: number[] = [];
        const hubOuterTop: number[] = [];
        const hubInnerBottom: number[] = [];
        const hubInnerTop: number[] = [];
 
+       const tanAngle = Math.tan(angleRad);
+
        for (let j = 0; j <= radialSegments; j++) {
            const theta = (j / radialSegments) * Math.PI * 2;
            const hubOuterR = holeRadius + rimW;
-           
-           // Inner Vertices (Hole)
+           const archOffset = getArchOffset(theta);
+
+           // Corner arch: extend outer-bottom OUTWARD along cone slope
+           // instead of dropping straight down. This makes the arch tips
+           // follow the spoke direction and merge into the spoke side walls.
+           const archRadialExt = tanAngle > 0.01 ? archOffset / tanAngle : 0;
+           const archR = hubOuterR + archRadialExt;
+           const archY = hubOuterY - archOffset;
+
+           // Inner Vertices (Hole) — unchanged
            vertices.push(holeRadius * Math.cos(theta), hubInnerY, holeRadius * Math.sin(theta));
            hubInnerBottom.push(vertexIndex++);
            vertices.push(holeRadius * Math.cos(theta), hubInnerY + suspThick, holeRadius * Math.sin(theta));
            hubInnerTop.push(vertexIndex++);
 
-           // Outer Vertices (Rim Edge)
-           vertices.push(hubOuterR * Math.cos(theta), hubOuterY, hubOuterR * Math.sin(theta));
+           // Outer Vertices — bottom extends along cone slope, top stays at hubOuterR
+           // This creates a tapered bracket: wider at bottom, meeting hub ring at top
+           vertices.push(archR * Math.cos(theta), archY, archR * Math.sin(theta));
            hubOuterBottom.push(vertexIndex++);
            vertices.push(hubOuterR * Math.cos(theta), hubOuterY + suspThick, hubOuterR * Math.sin(theta));
            hubOuterTop.push(vertexIndex++);
@@ -610,9 +669,6 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
        // Spokes use radial subdivisions with a power-curve arch so the geometry
        // is steep (nearly vertical) at the hub and gentle at the wall.
        // This ensures every layer during FDM printing has minimal overhang.
-       const arms = Math.max(2, Math.min(12, suspensionRibCount || 4));
-       const armWidthDeg = Math.max(5, Math.min(90, suspensionRibWidth || 40));
-       const armWidthRad = armWidthDeg * (Math.PI / 180);
        const segmentsPerArm = Math.max(2, Math.floor(radialSegments / arms * (armWidthDeg / 360)));
 
        // Constants for radial scanning
@@ -620,9 +676,9 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
        const dr = 0.05; // 0.5mm step resolution
        const maxScanR = Math.max(rT, rB) * 1.5; // Max bounds
 
-       // Arch parameters
-       const RADIAL_STEPS = 6; // Subdivisions from hub to wall
-       const ARCH_POWER = 0.55; // <1 = steep at hub, gentle at wall
+       // Arch parameters — lower power = more dramatic arch
+       const RADIAL_STEPS = 8; // Subdivisions from hub to wall
+       const ARCH_POWER = Math.max(0.1, Math.min(1.0, params.suspensionArchPower ?? 0.35));
 
        // Angular sweep for conservative wall sampling
        const ribHalfWave = params.ribCount > 0 ? Math.PI / Math.max(1, params.ribCount) : 0;
@@ -770,6 +826,9 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
                );
            }
        }
+
+       // Corner arches are now integrated into the hub ring geometry (section A).
+       // The hub ring's outer-bottom edge dips near spoke edges via getArchOffset().
     }
   }
 

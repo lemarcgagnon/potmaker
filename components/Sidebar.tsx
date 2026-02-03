@@ -479,8 +479,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport })
                             <DualInput label="Height Position" value={params.suspensionHeight * 100} min={5} max={95} step={1} onChange={(v) => update('suspensionHeight', v / 100)} unit="%" />
                             <DualInput label="Hole Diameter" value={params.suspensionHoleSize} min={2.5} max={5.0} step={0.1} onChange={(v) => update('suspensionHoleSize', v)} unit="cm" displayUnit={displayUnit} />
                             <div className="h-px bg-gray-800" />
+                            <DualInput label="Spoke Angle" value={params.suspensionAngle} min={15} max={75} step={1} onChange={(v) => update('suspensionAngle', v)} unit="deg" />
+                            <DualInput label="Spoke Arch" value={params.suspensionArchPower} min={0.1} max={1.0} step={0.05} onChange={(v) => update('suspensionArchPower', v)} />
+                            {params.suspensionArchPower < 0.3 && (
+                               <p className="text-[10px] text-amber-400 mt-1">Very steep arch — check clearance in slicer</p>
+                            )}
+                            <div className="h-px bg-gray-800" />
                             <DualInput label="Spoke Count" value={params.suspensionRibCount} min={2} max={8} step={1} onChange={(v) => update('suspensionRibCount', v)} />
                             <DualInput label="Spoke Width" value={params.suspensionRibWidth} min={10} max={90} step={5} onChange={(v) => update('suspensionRibWidth', v)} unit="deg" />
+                            <div className="h-px bg-gray-800" />
+                            <p className="text-[10px] uppercase text-gray-500 font-bold mb-2 mt-2">Corner Arches</p>
+                            <DualInput label="Arch Drop" value={params.suspensionButtressExtent} min={0} max={1.0} step={0.05} onChange={(v) => update('suspensionButtressExtent', v)} unit="cm" displayUnit={displayUnit} />
+                            <DualInput label="Arch Curve" value={params.suspensionButtressArc} min={0.3} max={3.0} step={0.1} onChange={(v) => update('suspensionButtressArc', v)} />
                         </div>
                     )}
                  </AccordionSection>
