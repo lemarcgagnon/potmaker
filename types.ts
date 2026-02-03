@@ -1,5 +1,5 @@
 export type DesignMode = 'pot' | 'shade';
-export type ShapeProfile = 'standard' | 'elliptic' | 'bell' | 'tulip' | 'cone' | 'barrel' | 'hourglass' | 'trumpet' | 'ogee' | 'vase' | 'hexagonal';
+export type ShapeProfile = 'standard' | 'elliptic' | 'bell' | 'tulip' | 'cone' | 'barrel' | 'hourglass' | 'trumpet' | 'ogee' | 'vase' | 'polygon';
 
 export interface DesignParams {
   mode: DesignMode;
@@ -48,6 +48,9 @@ export interface DesignParams {
   saucerBaseThickness: number; // Thickness of the saucer floor
   saucerSlope: number; // Angle/Flare of the saucer (degrees)
   saucerSeparation: number; // View separation
+
+  // Polygon Cross-Section
+  polygonSides: number; // Number of flat sides (3–12) when profile is 'polygon'
 
   // Shape Modifiers
   curvature: number; // Positive for bulge, negative for hourglass
@@ -112,6 +115,8 @@ export const DEFAULT_PARAMS: DesignParams = {
   saucerSlope: 15,
   saucerSeparation: 0,
   
+  polygonSides: 6,
+
   curvature: 0,
   curveBias: 0.5,
   

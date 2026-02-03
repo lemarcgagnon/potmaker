@@ -179,7 +179,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport })
     trumpet:    { profile: 'trumpet',    curvature: 0,    curveBias: 0.5 },
     ogee:       { profile: 'ogee',       curvature: 1.5,  curveBias: 0.5 },
     vase:       { profile: 'vase',       curvature: 0,    curveBias: 0.5 },
-    hexagonal:  { profile: 'hexagonal',  curvature: 0,    curveBias: 0.5 },
+    polygon:    { profile: 'polygon',    curvature: 0,    curveBias: 0.5 },
   };
 
   const applyProfile = (p: ShapeProfile) => {
@@ -298,7 +298,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport })
                 <div className="mb-4">
                   <label className="text-xs font-semibold text-gray-400 uppercase mb-2 block">Profile Curve</label>
                   <div className="grid grid-cols-5 gap-1">
-                      {(['cone', 'standard', 'elliptic', 'bell', 'tulip', 'barrel', 'hourglass', 'trumpet', 'ogee', 'vase', 'hexagonal'] as ShapeProfile[]).map((p) => (
+                      {(['cone', 'standard', 'elliptic', 'bell', 'tulip', 'barrel', 'hourglass', 'trumpet', 'ogee', 'vase', 'polygon'] as ShapeProfile[]).map((p) => (
                           <button
                               key={p}
                               onClick={() => applyProfile(p)}
@@ -312,6 +312,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport })
                           </button>
                       ))}
                   </div>
+                  {params.profile === 'polygon' && (
+                    <div className="mt-2">
+                      <DualInput label="Sides" value={params.polygonSides} min={3} max={12} step={1} onChange={(v) => update('polygonSides', Math.round(v))} />
+                    </div>
+                  )}
                 </div>
 
                 <DualInput label="Height" value={params.height} min={5} max={60} onChange={(v) => update('height', v)} unit="cm" displayUnit={displayUnit} />
