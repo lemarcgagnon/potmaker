@@ -69,26 +69,39 @@ const calculatePointData = (
   let taperT = tStepped;
 
   if (profile === 'bell') {
-      // Bell: Use curvature to control the power/exponent of the taper
-      // Curvature 0 -> Linear
-      // Curvature > 0 -> Convex Bell (bulges out) -> Power < 1
-      // Curvature < 0 -> Concave Bell (flares out) -> Power > 1
-      // Map -8..8 to decent power range
-      const power = Math.pow(1.5, -curvature); 
+      // Bell: Power-curve taper. Base 2.0 for pronounced shape.
+      // Curvature > 0 -> Convex (bulges), < 0 -> Concave (flares)
+      const power = Math.pow(2.0, -curvature);
       taperT = Math.pow(tStepped, power);
   } else if (profile === 'tulip') {
-      // Tulip: S-Curve taper
-      // Hermite smoothstep-like: 3t^2 - 2t^3
+      // Tulip: Hermite S-Curve 3t^2 - 2t^3
       taperT = tStepped * tStepped * (3 - 2 * tStepped);
+  } else if (profile === 'barrel') {
+      // Barrel: Cosine ease — naturally rounded transition
+      taperT = 0.5 - 0.5 * Math.cos(Math.PI * tStepped);
+  } else if (profile === 'trumpet') {
+      // Trumpet: Exponential — most radius change near the top
+      const k = 2.5;
+      taperT = (Math.exp(k * tStepped) - 1) / (Math.exp(k) - 1);
+  } else if (profile === 'ogee') {
+      // Ogee: Cubic ease-in-out S (architectural double curve)
+      if (tStepped < 0.5) {
+          taperT = 4 * tStepped * tStepped * tStepped;
+      } else {
+          taperT = 1 - Math.pow(-2 * tStepped + 2, 3) / 2;
+      }
+  } else if (profile === 'vase') {
+      // Vase: Built-in belly + neck via sin(2πt) offset
+      taperT = tStepped + 0.12 * Math.sin(2 * Math.PI * tStepped);
   }
+  // cone and standard: taperT stays linear (tStepped)
 
   // Calculate Base Taper
   const rLinear = rB + (rT - rB) * taperT;
   baseRadius = rLinear;
 
-  // Additive Bulge (Standard, Elliptic, Tulip)
-  // Bell uses curvature for exponent, so skips this.
-  if (profile !== 'bell' && Math.abs(curvature) > 0.01) {
+  // Additive Bulge — skipped for bell (uses power curve) and cone (pure linear)
+  if (profile !== 'bell' && profile !== 'cone' && Math.abs(curvature) > 0.01) {
     const safeBias = Math.max(0.1, Math.min(0.9, curveBias));
     
     // Bias shaping function

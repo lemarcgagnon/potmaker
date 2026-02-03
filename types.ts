@@ -1,5 +1,5 @@
 export type DesignMode = 'pot' | 'shade';
-export type ShapeProfile = 'standard' | 'elliptic' | 'bell' | 'tulip';
+export type ShapeProfile = 'standard' | 'elliptic' | 'bell' | 'tulip' | 'cone' | 'barrel' | 'hourglass' | 'trumpet' | 'ogee' | 'vase';
 
 export interface DesignParams {
   mode: DesignMode;

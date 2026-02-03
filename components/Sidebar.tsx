@@ -129,10 +129,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport })
   };
 
   const profilePresets: Record<ShapeProfile, Partial<DesignParams>> = {
-    standard:  { profile: 'standard',  curvature: 0,   curveBias: 0.5 },
-    elliptic:  { profile: 'elliptic',  curvature: 3.0, curveBias: 0.5 },
-    bell:      { profile: 'bell',      curvature: 3.0, curveBias: 0.5 },
-    tulip:     { profile: 'tulip',     curvature: 2.0, curveBias: 0.6 },
+    cone:       { profile: 'cone',       curvature: 0,    curveBias: 0.5 },
+    standard:   { profile: 'standard',   curvature: 0,    curveBias: 0.5 },
+    elliptic:   { profile: 'elliptic',   curvature: 3.0,  curveBias: 0.5 },
+    bell:       { profile: 'bell',       curvature: 4.0,  curveBias: 0.5 },
+    tulip:      { profile: 'tulip',      curvature: 2.0,  curveBias: 0.6 },
+    barrel:     { profile: 'barrel',     curvature: 3.5,  curveBias: 0.5 },
+    hourglass:  { profile: 'hourglass',  curvature: -3.5, curveBias: 0.5 },
+    trumpet:    { profile: 'trumpet',    curvature: 0,    curveBias: 0.5 },
+    ogee:       { profile: 'ogee',       curvature: 1.5,  curveBias: 0.5 },
+    vase:       { profile: 'vase',       curvature: 0,    curveBias: 0.5 },
   };
 
   const applyProfile = (p: ShapeProfile) => {
@@ -235,8 +241,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport })
              >
                 <div className="mb-4">
                   <label className="text-xs font-semibold text-gray-400 uppercase mb-2 block">Profile Curve</label>
-                  <div className="grid grid-cols-4 gap-1">
-                      {(['standard', 'elliptic', 'bell', 'tulip'] as ShapeProfile[]).map((p) => (
+                  <div className="grid grid-cols-5 gap-1">
+                      {(['cone', 'standard', 'elliptic', 'bell', 'tulip', 'barrel', 'hourglass', 'trumpet', 'ogee', 'vase'] as ShapeProfile[]).map((p) => (
                           <button
                               key={p}
                               onClick={() => applyProfile(p)}
@@ -246,7 +252,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport })
                                       : 'bg-gray-900 border-gray-800 text-gray-600 hover:text-gray-400'
                               }`}
                           >
-                              {p.slice(0,4)}
+                              {p.length <= 5 ? p : p.slice(0,4)}
                           </button>
                       ))}
                   </div>
