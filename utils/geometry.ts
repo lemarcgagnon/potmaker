@@ -431,64 +431,110 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
   }
 
   // Bottom Cap (Floor OR Open Rim OR Suspension)
+  // Outer (bottom-facing) surface enforces a 35° minimum slope for FDM printability.
+  // When bottomLift > 0 and the naive cone would be too shallow, the floor splits into
+  // a flat ring (on the build plate) plus a 35° cone to the raised center/hole.
   if (mode === 'pot') {
     const holeRadius = Math.max(0, drainageHoleSize / 2);
-    const liftY = bottomLift; 
-    
-    if (holeRadius <= 0.05) {
-        // Closed Bottom
-        vertices.push(0, liftY, 0);
-        const centerOuter = vertexIndex++;
-        // Change: Use potFloorThickness
-        vertices.push(0, potFloorThickness + liftY, 0);
-        const centerInner = vertexIndex++;
+    const liftY = bottomLift;
+    const MIN_FLOOR_ANGLE = 35 * (Math.PI / 180);
 
-        for (let j = 0; j < radialSegments; j++) {
-          const curr = gridOuter[j];
-          const next = gridOuter[j + 1];
-          indices.push(centerOuter, curr, next);
-        }
-        for (let j = 0; j < radialSegments; j++) {
-          const curr = gridInner[j];
-          const next = gridInner[j + 1];
-          indices.push(centerInner, next, curr);
+    if (liftY <= 0.01) {
+        // ====== NO LIFT: FLAT FLOOR ======
+        if (holeRadius <= 0.05) {
+            // Closed flat
+            vertices.push(0, 0, 0);
+            const cOuter = vertexIndex++;
+            vertices.push(0, potFloorThickness, 0);
+            const cInner = vertexIndex++;
+            for (let j = 0; j < radialSegments; j++) {
+              indices.push(cOuter, gridOuter[j], gridOuter[j + 1]);
+            }
+            for (let j = 0; j < radialSegments; j++) {
+              indices.push(cInner, gridInner[j + 1], gridInner[j]);
+            }
+        } else {
+            // Flat with drain hole
+            const gridHoleO: number[] = [];
+            const gridHoleI: number[] = [];
+            for (let j = 0; j <= radialSegments; j++) {
+               const theta = (j / radialSegments) * Math.PI * 2;
+               const cx = holeRadius * Math.cos(theta);
+               const cz = holeRadius * Math.sin(theta);
+               vertices.push(cx, 0, cz);
+               gridHoleO.push(vertexIndex++);
+               vertices.push(cx, potFloorThickness, cz);
+               gridHoleI.push(vertexIndex++);
+            }
+            for (let j = 0; j < radialSegments; j++) {
+                addQuad(gridOuter[j], gridOuter[j+1], gridHoleO[j+1], gridHoleO[j]);
+            }
+            for (let j = 0; j < radialSegments; j++) {
+                addQuad(gridInner[j], gridInner[j+1], gridHoleI[j+1], gridHoleI[j], true);
+            }
+            for (let j = 0; j < radialSegments; j++) {
+                addQuad(gridHoleO[j], gridHoleO[j+1], gridHoleI[j+1], gridHoleI[j]);
+            }
         }
     } else {
-        // Hole Bottom
-        const gridHoleOuter: number[] = [];
-        const gridHoleInner: number[] = [];
-        
+        // ====== WITH LIFT: 35° ANGLE-CONSTRAINED FLOOR ======
+        // rConeBase = radius from center where the 35° cone meets y=0
+        const tanA = Math.tan(MIN_FLOOR_ANGLE);
+        const rConeBase = holeRadius + liftY / tanA;
+
+        // --- Outer surface: flat ring (y=0) + 35° cone to center ---
+        const gridTransO: number[] = [];
         for (let j = 0; j <= radialSegments; j++) {
-           const theta = (j / radialSegments) * Math.PI * 2;
-           const x = holeRadius * Math.cos(theta);
-           const z = holeRadius * Math.sin(theta);
-           vertices.push(x, liftY, z);
-           gridHoleOuter.push(vertexIndex++);
-           // Change: Use potFloorThickness
-           vertices.push(x, potFloorThickness + liftY, z);
-           gridHoleInner.push(vertexIndex++);
+            const theta = (j / radialSegments) * Math.PI * 2;
+            const pO = calculatePointData(0, theta, params);
+            const rT = Math.min(pO.r, rConeBase);
+            vertices.push(rT * Math.cos(theta), 0, rT * Math.sin(theta));
+            gridTransO.push(vertexIndex++);
         }
-        
+
+        // Flat ring: wall outer row → transition ring (faces down)
         for (let j = 0; j < radialSegments; j++) {
-            const out1 = gridOuter[j];
-            const out2 = gridOuter[j+1];
-            const hole1 = gridHoleOuter[j];
-            const hole2 = gridHoleOuter[j+1];
-            addQuad(out1, out2, hole2, hole1);
+            addQuad(gridOuter[j], gridOuter[j+1], gridTransO[j+1], gridTransO[j]);
         }
-        for (let j = 0; j < radialSegments; j++) {
-            const in1 = gridInner[j];
-            const in2 = gridInner[j+1];
-            const hole1 = gridHoleInner[j];
-            const hole2 = gridHoleInner[j+1];
-            addQuad(in1, in2, hole2, hole1, true);
-        }
-        for (let j = 0; j < radialSegments; j++) {
-            const lower1 = gridHoleOuter[j];
-            const lower2 = gridHoleOuter[j+1];
-            const upper1 = gridHoleInner[j];
-            const upper2 = gridHoleInner[j+1];
-            addQuad(lower1, lower2, upper2, upper1);
+
+        if (holeRadius <= 0.05) {
+            // Cone: transition → center (outer, faces down)
+            vertices.push(0, liftY, 0);
+            const cOuter = vertexIndex++;
+            for (let j = 0; j < radialSegments; j++) {
+                indices.push(cOuter, gridTransO[j], gridTransO[j + 1]);
+            }
+            // Inner surface: simple fan from inner row to center (faces up, unchanged)
+            vertices.push(0, potFloorThickness + liftY, 0);
+            const cInner = vertexIndex++;
+            for (let j = 0; j < radialSegments; j++) {
+                indices.push(cInner, gridInner[j + 1], gridInner[j]);
+            }
+        } else {
+            // Cone: transition → hole ring (outer) + inner fan + hole tube
+            const gridHoleO: number[] = [];
+            const gridHoleI: number[] = [];
+            for (let j = 0; j <= radialSegments; j++) {
+                const theta = (j / radialSegments) * Math.PI * 2;
+                const cx = holeRadius * Math.cos(theta);
+                const cz = holeRadius * Math.sin(theta);
+                vertices.push(cx, liftY, cz);
+                gridHoleO.push(vertexIndex++);
+                vertices.push(cx, potFloorThickness + liftY, cz);
+                gridHoleI.push(vertexIndex++);
+            }
+            // Outer cone: transition → hole (faces down)
+            for (let j = 0; j < radialSegments; j++) {
+                addQuad(gridTransO[j], gridTransO[j+1], gridHoleO[j+1], gridHoleO[j]);
+            }
+            // Inner: wall inner row → hole inner (faces up, unchanged)
+            for (let j = 0; j < radialSegments; j++) {
+                addQuad(gridInner[j], gridInner[j+1], gridHoleI[j+1], gridHoleI[j], true);
+            }
+            // Hole tube (faces inward)
+            for (let j = 0; j < radialSegments; j++) {
+                addQuad(gridHoleO[j], gridHoleO[j+1], gridHoleI[j+1], gridHoleI[j]);
+            }
         }
     }
 

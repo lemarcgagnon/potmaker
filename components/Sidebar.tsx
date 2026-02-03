@@ -351,6 +351,20 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport })
                     <DualInput label="Floor Thickness" value={params.potFloorThickness} min={0.4} max={2.0} step={0.1} onChange={(v) => update('potFloorThickness', v)} unit="cm" displayUnit={displayUnit} />
                     <DualInput label="Drain Hole" value={params.drainageHoleSize} min={0} max={6} step={0.1} onChange={(v) => update('drainageHoleSize', v)} unit="cm" displayUnit={displayUnit} />
                     <DualInput label="Bottom Lift" value={params.bottomLift} min={0} max={3} step={0.1} onChange={(v) => update('bottomLift', v)} unit="cm" displayUnit={displayUnit} />
+                    {params.bottomLift > 0.01 && (() => {
+                      const holeR = Math.max(0, params.drainageHoleSize / 2);
+                      const floorR = params.radiusBottom - params.thickness;
+                      const naiveAngle = Math.atan2(params.bottomLift, floorR - holeR) * (180 / Math.PI);
+                      return naiveAngle < 35 ? (
+                        <p className="text-[10px] text-gray-400 mt-1">
+                          Floor auto-corrected to 35° (naive {naiveAngle.toFixed(0)}° too shallow)
+                        </p>
+                      ) : (
+                        <p className="text-[10px] text-green-500/70 mt-1">
+                          Floor angle: {naiveAngle.toFixed(0)}°
+                        </p>
+                      );
+                    })()}
                   </>
                 )}
              </AccordionSection>
