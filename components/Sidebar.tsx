@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DesignParams, DEFAULT_PARAMS, ShapeProfile } from '../types';
 import { 
   Download, Box, Layers, Palette, Cylinder, Package, Spline, 
@@ -14,52 +14,91 @@ interface SidebarProps {
   onExport: (type: 'body' | 'saucer' | 'all') => void;
 }
 
+// --- UNIT SYSTEM ---
+
+type DisplayUnit = 'mm' | 'cm' | 'in';
+
+const UNIT_FACTORS: Record<DisplayUnit, number> = {
+  mm: 10,
+  cm: 1,
+  in: 1 / 2.54,
+};
+
 // --- SUB-COMPONENTS ---
 
 const DualInput: React.FC<{
   label: string;
-  value: number;
-  min: number;
-  max: number;
-  step?: number;
+  value: number;       // Internal value (always cm for lengths)
+  min: number;         // Internal min (cm)
+  max: number;         // Internal max (cm)
+  step?: number;       // Internal step (cm)
   onChange: (val: number) => void;
-  unit?: string;
-}> = ({ label, value, min, max, step = 0.1, onChange, unit }) => {
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    let val = parseFloat(e.target.value);
-    if (isNaN(val)) return;
-    // Clamp only for slider consistency, but allow typing slightly outside if really needed? 
-    // Better to clamp to prevent breaking geometry
-    val = Math.max(min, Math.min(max, val));
-    onChange(val);
+  unit?: string;       // 'cm' = length (converts), 'deg'/'%'/etc = passthrough
+  displayUnit?: DisplayUnit;
+  warning?: string;
+}> = ({ label, value, min, max, step = 0.1, onChange, unit, displayUnit = 'cm', warning }) => {
+  const isLength = unit === 'cm';
+  const factor = isLength ? UNIT_FACTORS[displayUnit] : 1;
+  const shownUnit = isLength ? displayUnit : (unit || '');
+
+  const dVal = value * factor;
+  const dMin = min * factor;
+  const dMax = max * factor;
+  const dStep = step * factor;
+  const decimals = dStep < 0.1 ? 2 : dStep < 1 ? 1 : 0;
+
+  const [text, setText] = useState(dVal.toFixed(decimals));
+  const [focused, setFocused] = useState(false);
+
+  // Sync display when value or unit changes (not while typing)
+  useEffect(() => {
+    if (!focused) setText(dVal.toFixed(decimals));
+  }, [dVal, decimals, focused]);
+
+  const handleSlider = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = parseFloat(e.target.value);
+    if (!isNaN(v)) onChange(Math.max(min, Math.min(max, v / factor)));
+  };
+
+  const handleText = (e: React.ChangeEvent<HTMLInputElement>) => setText(e.target.value);
+
+  const commitText = () => {
+    setFocused(false);
+    let v = parseFloat(text);
+    if (isNaN(v)) { setText(dVal.toFixed(decimals)); return; }
+    v = Math.max(dMin, Math.min(dMax, v));
+    setText(v.toFixed(decimals));
+    onChange(v / factor);
   };
 
   return (
     <div className="mb-4 last:mb-0">
       <div className="flex justify-between items-center mb-1.5">
         <label className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{label}</label>
+        {shownUnit && <span className="text-[10px] text-gray-500 font-mono">{shownUnit}</span>}
       </div>
       <div className="flex items-center gap-3">
         <input
           type="range"
-          min={min}
-          max={max}
-          step={step}
-          value={value}
-          onChange={handleChange}
+          min={dMin}
+          max={dMax}
+          step={dStep}
+          value={dVal}
+          onChange={handleSlider}
           className="flex-1 h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500 hover:accent-blue-400 transition-colors"
         />
-        <div className="relative">
-          <input 
-            type="number" 
-            value={Number(value).toFixed(step < 0.1 ? 2 : 1)} 
-            onChange={handleChange}
-            step={step}
-            className="w-16 bg-gray-800 border border-gray-700 text-white text-xs font-mono py-1 px-1.5 rounded text-right focus:border-blue-500 focus:outline-none transition-colors"
-          />
-          {unit && <span className="absolute right-8 top-1/2 -translate-y-1/2 text-[10px] text-gray-500 pointer-events-none opacity-0">{unit}</span>}
-        </div>
+        <input
+          type="number"
+          value={text}
+          onChange={handleText}
+          onFocus={() => setFocused(true)}
+          onBlur={commitText}
+          onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+          step={dStep}
+          className="w-16 bg-gray-800 border border-gray-700 text-white text-xs font-mono py-1 px-1.5 rounded text-right focus:border-blue-500 focus:outline-none transition-colors"
+        />
       </div>
+      {warning && <p className="text-[10px] text-amber-400 mt-1">{warning}</p>}
     </div>
   );
 };
@@ -95,7 +134,8 @@ type Tab = 'form' | 'details' | 'finish';
 
 export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport }) => {
   const [activeTab, setActiveTab] = useState<Tab>('form');
-  
+  const [displayUnit, setDisplayUnit] = useState<DisplayUnit>('cm');
+
   // Manage accordion states
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     'dimensions': true,
@@ -166,7 +206,22 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport })
               <Box className="w-5 h-5 text-blue-500 fill-blue-500/20" />
               Manifold PRO
             </h1>
-            <div className="flex gap-1">
+            <div className="flex items-center gap-1">
+               <div className="flex bg-gray-950 rounded border border-gray-800 mr-2">
+                 {(['mm', 'cm', 'in'] as DisplayUnit[]).map((u) => (
+                   <button
+                     key={u}
+                     onClick={() => setDisplayUnit(u)}
+                     className={`px-2 py-1 text-[10px] font-bold uppercase transition-all ${
+                       displayUnit === u
+                         ? 'bg-gray-700 text-white'
+                         : 'text-gray-600 hover:text-gray-400'
+                     }`}
+                   >
+                     {u}
+                   </button>
+                 ))}
+               </div>
                <button onClick={() => expandAll(false)} className="p-1.5 hover:bg-gray-800 rounded text-gray-500 hover:text-white" title="Collapse All">
                  <ChevronsUp className="w-4 h-4" />
                </button>
@@ -258,9 +313,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport })
                   </div>
                 </div>
 
-                <DualInput label="Height" value={params.height} min={5} max={60} onChange={(v) => update('height', v)} unit="cm" />
-                <DualInput label="Top Radius" value={params.radiusTop} min={2} max={30} onChange={(v) => update('radiusTop', v)} unit="cm" />
-                <DualInput label="Bottom Radius" value={params.radiusBottom} min={2} max={30} onChange={(v) => update('radiusBottom', v)} unit="cm" />
+                <DualInput label="Height" value={params.height} min={5} max={60} onChange={(v) => update('height', v)} unit="cm" displayUnit={displayUnit} />
+                <DualInput label="Top Radius" value={params.radiusTop} min={2} max={30} onChange={(v) => update('radiusTop', v)} unit="cm" displayUnit={displayUnit} />
+                <DualInput label="Bottom Radius" value={params.radiusBottom} min={2} max={30} onChange={(v) => update('radiusBottom', v)} unit="cm" displayUnit={displayUnit} />
+                {(() => {
+                  const wallAngle = Math.atan2(Math.abs(params.radiusTop - params.radiusBottom), params.height) * (180 / Math.PI);
+                  return wallAngle > 30 ? (
+                    <p className="text-[10px] text-amber-400 mt-1">
+                      Wall taper is {wallAngle.toFixed(0)}° — exceeds 30° FDM overhang limit
+                    </p>
+                  ) : null;
+                })()}
              </AccordionSection>
 
              <AccordionSection
@@ -269,15 +332,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport })
                 isOpen={openSections['shape']}
                 onToggle={() => toggleSection('shape')}
              >
-                <DualInput label="Wall Thickness" value={params.thickness} min={0.2} max={2.0} step={0.05} onChange={(v) => update('thickness', v)} unit="cm" />
-                <DualInput label="Top Rim Bevel" value={params.rimAngle} min={-45} max={45} step={1} onChange={(v) => update('rimAngle', v)} unit="deg" />
-                
+                <DualInput label="Wall Thickness" value={params.thickness} min={0.2} max={2.0} step={0.05} onChange={(v) => update('thickness', v)} unit="cm" displayUnit={displayUnit} />
+                <DualInput
+                  label="Top Rim Bevel" value={params.rimAngle} min={-45} max={45} step={1}
+                  onChange={(v) => update('rimAngle', v)} unit="deg"
+                  warning={Math.abs(params.rimAngle) > 30 ? `${Math.abs(params.rimAngle)}° exceeds 30° FDM overhang limit` : undefined}
+                />
+
                 {params.mode === 'pot' && (
                   <>
                     <div className="h-px bg-gray-800 my-4" />
-                    <DualInput label="Floor Thickness" value={params.potFloorThickness} min={0.2} max={2.0} step={0.1} onChange={(v) => update('potFloorThickness', v)} unit="cm" />
-                    <DualInput label="Drain Hole" value={params.drainageHoleSize} min={0} max={6} step={0.1} onChange={(v) => update('drainageHoleSize', v)} unit="cm" />
-                    <DualInput label="Bottom Lift" value={params.bottomLift} min={0} max={3} step={0.1} onChange={(v) => update('bottomLift', v)} unit="cm" />
+                    <DualInput label="Floor Thickness" value={params.potFloorThickness} min={0.4} max={2.0} step={0.1} onChange={(v) => update('potFloorThickness', v)} unit="cm" displayUnit={displayUnit} />
+                    <DualInput label="Drain Hole" value={params.drainageHoleSize} min={0} max={6} step={0.1} onChange={(v) => update('drainageHoleSize', v)} unit="cm" displayUnit={displayUnit} />
+                    <DualInput label="Bottom Lift" value={params.bottomLift} min={0} max={3} step={0.1} onChange={(v) => update('bottomLift', v)} unit="cm" displayUnit={displayUnit} />
                   </>
                 )}
              </AccordionSection>
@@ -299,19 +366,20 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport })
                   <DualInput label="Twist" value={params.twist} min={-180} max={180} step={5} onChange={(v) => update('twist', v)} unit="deg" />
                   
                   <div className="mt-4 pt-4 border-t border-gray-800">
-                    <DualInput label="Base Flare Width" value={params.baseFlareWidth} min={0} max={8} step={0.1} onChange={(v) => update('baseFlareWidth', v)} unit="cm" />
-                    <DualInput label="Base Flare Height" value={params.baseFlareHeight} min={0} max={params.height * 0.5} step={0.1} onChange={(v) => update('baseFlareHeight', v)} unit="cm" />
+                    <DualInput label="Base Flare Width" value={params.baseFlareWidth} min={0} max={8} step={0.1} onChange={(v) => update('baseFlareWidth', v)} unit="cm" displayUnit={displayUnit} />
+                    <DualInput label="Base Flare Height" value={params.baseFlareHeight} min={0} max={params.height * 0.5} step={0.1} onChange={(v) => update('baseFlareHeight', v)} unit="cm" displayUnit={displayUnit} />
                   </div>
 
                   <div className="mt-4 pt-4 border-t border-gray-800">
-                    <DualInput label="Top Flare Width" value={params.topFlareWidth} min={0} max={8} step={0.1} onChange={(v) => update('topFlareWidth', v)} unit="cm" />
-                    <DualInput label="Top Flare Height" value={params.topFlareHeight} min={0} max={params.height * 0.5} step={0.1} onChange={(v) => update('topFlareHeight', v)} unit="cm" />
-                    {params.topFlareWidth > 0 && params.topFlareHeight > 0 &&
-                     params.topFlareWidth > (Math.tan(Math.PI / 6) * params.topFlareHeight / 2) && (
-                      <p className="text-[10px] text-amber-400 mt-1">
-                        Clamped to {(Math.tan(Math.PI / 6) * params.topFlareHeight / 2).toFixed(1)} cm (30deg limit)
-                      </p>
-                    )}
+                    <DualInput
+                      label="Top Flare Width" value={params.topFlareWidth} min={0} max={8} step={0.1}
+                      onChange={(v) => update('topFlareWidth', v)} unit="cm" displayUnit={displayUnit}
+                      warning={params.topFlareWidth > 0 && params.topFlareHeight > 0 &&
+                        params.topFlareWidth > (Math.tan(Math.PI / 6) * params.topFlareHeight / 2)
+                        ? `Clamped to ${(Math.tan(Math.PI / 6) * params.topFlareHeight / 2 * UNIT_FACTORS[displayUnit]).toFixed(1)} ${displayUnit} (30° limit)`
+                        : undefined}
+                    />
+                    <DualInput label="Top Flare Height" value={params.topFlareHeight} min={0} max={params.height * 0.5} step={0.1} onChange={(v) => update('topFlareHeight', v)} unit="cm" displayUnit={displayUnit} />
                   </div>
               </AccordionSection>
 
@@ -324,11 +392,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport })
                   <div className="mb-4">
                      <p className="text-[10px] uppercase text-gray-500 font-bold mb-2">Vertical Ribs</p>
                      <DualInput label="Count" value={params.ribCount} min={0} max={48} step={1} onChange={(v) => update('ribCount', v)} />
-                     <DualInput label="Depth" value={params.ribAmplitude} min={0} max={2.0} step={0.1} onChange={(v) => update('ribAmplitude', v)} />
+                     <DualInput label="Depth" value={params.ribAmplitude} min={0} max={2.0} step={0.1} onChange={(v) => update('ribAmplitude', v)} unit="cm" displayUnit={displayUnit} />
                   </div>
                   <div className="pt-2 border-t border-gray-800">
                      <p className="text-[10px] uppercase text-gray-500 font-bold mb-2 mt-2">Horizontal Ripples</p>
-                     <DualInput label="Amplitude" value={params.rippleAmplitude} min={0} max={1.0} step={0.05} onChange={(v) => update('rippleAmplitude', v)} />
+                     <DualInput label="Amplitude" value={params.rippleAmplitude} min={0} max={1.0} step={0.05} onChange={(v) => update('rippleAmplitude', v)} unit="cm" displayUnit={displayUnit} />
                      <DualInput label="Frequency" value={params.rippleFrequency} min={1} max={40} step={1} onChange={(v) => update('rippleFrequency', v)} />
                      <DualInput label="Steps (Terrace)" value={params.stepCount} min={0} max={30} step={1} onChange={(v) => update('stepCount', v)} />
                   </div>
@@ -347,9 +415,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport })
                     >
                         <Wand2 className="w-3 h-3" /> Auto-Fit Geometry
                     </button>
-                    <DualInput label="Saucer Height" value={params.saucerHeight} min={1} max={8} onChange={(v) => update('saucerHeight', v)} unit="cm" />
-                    <DualInput label="Gap (Tolerance)" value={params.saucerGap} min={0.1} max={1.5} step={0.05} onChange={(v) => update('saucerGap', v)} unit="cm" />
-                    <DualInput label="Flare Angle" value={params.saucerSlope} min={0} max={45} step={1} onChange={(v) => update('saucerSlope', v)} unit="deg" />
+                    <DualInput label="Saucer Height" value={params.saucerHeight} min={1} max={8} onChange={(v) => update('saucerHeight', v)} unit="cm" displayUnit={displayUnit} />
+                    <DualInput label="Gap (Tolerance)" value={params.saucerGap} min={0.1} max={1.5} step={0.05} onChange={(v) => update('saucerGap', v)} unit="cm" displayUnit={displayUnit} />
+                    <DualInput
+                      label="Flare Angle" value={params.saucerSlope} min={0} max={45} step={1}
+                      onChange={(v) => update('saucerSlope', v)} unit="deg"
+                      warning={params.saucerSlope > 30 ? `${params.saucerSlope}° exceeds 30° FDM overhang limit` : undefined}
+                    />
                  </AccordionSection>
               )}
 
@@ -377,7 +449,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport })
                     {params.enableSuspension && (
                         <div className="space-y-4">
                             <DualInput label="Height Position" value={params.suspensionHeight * 100} min={5} max={95} step={1} onChange={(v) => update('suspensionHeight', v / 100)} unit="%" />
-                            <DualInput label="Hole Diameter" value={params.suspensionHoleSize} min={2.5} max={5.0} step={0.1} onChange={(v) => update('suspensionHoleSize', v)} unit="cm" />
+                            <DualInput label="Hole Diameter" value={params.suspensionHoleSize} min={2.5} max={5.0} step={0.1} onChange={(v) => update('suspensionHoleSize', v)} unit="cm" displayUnit={displayUnit} />
                             <div className="h-px bg-gray-800" />
                             <DualInput label="Spoke Count" value={params.suspensionRibCount} min={2} max={8} step={1} onChange={(v) => update('suspensionRibCount', v)} />
                             <DualInput label="Spoke Width" value={params.suspensionRibWidth} min={10} max={90} step={5} onChange={(v) => update('suspensionRibWidth', v)} unit="deg" />
@@ -419,7 +491,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport })
                      <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
                         <Layers className="w-4 h-4 text-orange-400" /> Assembly View
                      </h3>
-                     <DualInput label="Explode Distance" value={params.saucerSeparation} min={0} max={10} step={0.5} onChange={(v) => update('saucerSeparation', v)} unit="cm" />
+                     <DualInput label="Explode Distance" value={params.saucerSeparation} min={0} max={10} step={0.5} onChange={(v) => update('saucerSeparation', v)} unit="cm" displayUnit={displayUnit} />
                  </div>
                )}
             </div>
