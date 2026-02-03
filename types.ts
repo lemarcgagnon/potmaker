@@ -70,7 +70,7 @@ export const DEFAULT_PARAMS: DesignParams = {
   radiusTop: 10.0,
   radiusBottom: 8.0,
   height: 15.0,
-  thickness: 1.0,
+  thickness: 0.4,
   potFloorThickness: 0.8, // Default sturdy floor
   radialSegments: 128,
   color: '#d2b48c',

@@ -56,6 +56,10 @@ export const ManifoldDesigner: React.FC<ManifoldDesignerProps> = ({
         // Clone geometry so we don't mutate the scene
         const geo = obj.geometry.clone();
 
+        // Scale cm → mm for STL (slicers assume mm)
+        const scaleMatrix = new THREE.Matrix4().makeScale(10, 10, 10);
+        geo.applyMatrix4(scaleMatrix);
+
         // Rotate +90° around X to convert Y-up (Three.js) to Z-up (STL/slicer)
         const rotMatrix = new THREE.Matrix4().makeRotationX(Math.PI / 2);
         geo.applyMatrix4(rotMatrix);
