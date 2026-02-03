@@ -613,10 +613,17 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
        const dr = 0.05; // 0.5mm step resolution
        const maxScanR = Math.max(rT, rB) * 1.5; // Max bounds
 
+       // Angular sweep for conservative wall sampling:
+       // Check at least half a rib wavelength on each side so rib peaks are never missed.
+       // Also covers twist-induced rib rotation across the spoke's height range.
+       const ribHalfWave = params.ribCount > 0 ? Math.PI / Math.max(1, params.ribCount) : 0;
+       const sweepHalf = Math.max(0.15, ribHalfWave, armWidthRad * 0.5);
+       const sweepStep = Math.max(0.03, sweepHalf / 6); // ~6 samples per side
+
        for (let k = 0; k < arms; k++) {
            const centerTheta = (k / arms) * Math.PI * 2;
            const startTheta = centerTheta - (armWidthRad / 2);
-           
+
            const armOuterBottom: number[] = [];
            const armOuterTop: number[] = [];
            const armInnerBottom: number[] = [];
@@ -624,22 +631,26 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
 
            for (let s = 0; s <= segmentsPerArm; s++) {
                const theta = startTheta + (s / segmentsPerArm) * armWidthRad;
-               const hubOuterR = holeRadius + rimW - 0.05; 
-               
-               // --- RADIAL WALL SCANNER & CLAMP ---
-               // 1. Scan outwards to find the inner wall surface
+               const hubOuterR = holeRadius + rimW - 0.05;
+
+               // --- RADIAL WALL SCANNER (multi-angle conservative) ---
+               // Scan outward, checking the wall at multiple angles around theta
+               // so twist + ribs never create a spoke that pierces the outer shell.
                let collisionR = hubOuterR;
                let foundInnerWall = false;
 
                for (let r = hubOuterR; r < maxScanR; r += dr) {
                    const yBot = centerHoleY - (r - holeRadius) * tanA;
-                   
-                   // Check bounds
+
                    if (yBot < 0 || yBot > h) { collisionR = r; foundInnerWall = true; break; }
 
-                   // Calc Wall Inner Limit
-                   const pBot = calculatePointData(yBot, theta, params);
-                   const limitBot = Math.max(0.1, pBot.r - thickness);
+                   // Sample wall at multiple angles — take the innermost (most conservative) limit
+                   let innermost = Infinity;
+                   for (let dTheta = -sweepHalf; dTheta <= sweepHalf; dTheta += sweepStep) {
+                       const p = calculatePointData(yBot, theta + dTheta, params);
+                       innermost = Math.min(innermost, p.r - thickness);
+                   }
+                   const limitBot = Math.max(0.1, innermost);
 
                    if (r >= limitBot) {
                        collisionR = r;
@@ -647,44 +658,35 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
                        break;
                    }
                }
-               
-               // 2. CONVERGENT HARD CLAMP
-               // Iterate 3 times to account for slope/curve discrepancy
-               // We also check Neighboring angles (Left/Right) to avoid "rib slicing"
-               
+
+               // --- CONVERGENT HARD CLAMP (wide angular sweep) ---
+               // Iterate to refine, sampling the full rib wavelength so no peak is missed.
                if (foundInnerWall) {
-                   // A. Desired Position: Inner Wall + Anchor Depth
                    let desiredR = collisionR + anchorDepth;
-                   const neighborOffset = 0.05; // ~3 degrees check
 
                    for(let iter=0; iter<3; iter++) {
-                       // B. Calculate Heights at this new desiredR
                        const yBotAtTip = centerHoleY - (desiredR - holeRadius) * tanA;
                        const yTopAtTip = yBotAtTip + suspThick;
 
-                       // C. Check Current Angle + Neighbors for absolute safest limit
-                       const anglesToCheck = [theta, theta - neighborOffset, theta + neighborOffset];
+                       // Sweep across the full angular band
                        let strictestLimit = Infinity;
-
-                       for(const checkTheta of anglesToCheck) {
-                           const pBotOuter = calculatePointData(yBotAtTip, checkTheta, params);
-                           const pTopOuter = calculatePointData(yTopAtTip, checkTheta, params);
-                           const limit = Math.min(pBotOuter.r, pTopOuter.r);
+                       for (let dTheta = -sweepHalf; dTheta <= sweepHalf; dTheta += sweepStep) {
+                           const checkTheta = theta + dTheta;
+                           const pBot = calculatePointData(yBotAtTip, checkTheta, params);
+                           const pTop = calculatePointData(yTopAtTip, checkTheta, params);
+                           const limit = Math.min(pBot.r, pTop.r);
                            if(limit < strictestLimit) strictestLimit = limit;
                        }
 
                        const hardLimitR = strictestLimit - safetyMargin;
-
-                       // D. Apply the Clamp
                        if (desiredR > hardLimitR) {
                            desiredR = hardLimitR;
                        }
                    }
-                   
+
                    collisionR = desiredR;
                } else {
-                   // Fallback if no wall found (e.g. infinite plane), just clamp to max
-                   collisionR = maxScanR; 
+                   collisionR = maxScanR;
                }
 
                // --- Generate Vertices using validated collisionR ---
