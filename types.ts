@@ -21,6 +21,10 @@ export interface DesignParams {
   // Base Stability (Flare)
   baseFlareWidth: number; // Extra radius at bottom
   baseFlareHeight: number; // Height of the flare transition
+
+  // Top Flare (Lip)
+  topFlareWidth: number;   // Extra radius at top
+  topFlareHeight: number;  // Height of the top flare transition zone
   
   // Drainage (Pot Mode)
   drainageHoleSize: number; // Diameter of the hole in cm
@@ -82,6 +86,9 @@ export const DEFAULT_PARAMS: DesignParams = {
   
   baseFlareWidth: 0,
   baseFlareHeight: 3.0,
+
+  topFlareWidth: 0,
+  topFlareHeight: 3.0,
   
   drainageHoleSize: 0,
   bottomLift: 0,

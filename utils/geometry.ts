@@ -25,7 +25,9 @@ const calculatePointData = (
     ribCount,
     ribAmplitude,
     baseFlareWidth,
-    baseFlareHeight
+    baseFlareHeight,
+    topFlareWidth,
+    topFlareHeight
   } = params;
 
   // Normalize Height (0 to 1)
@@ -117,6 +119,19 @@ const calculatePointData = (
      const tFlare = 1 - yRel;
      const flareShape = tFlare * tFlare;
      baseRadius += baseFlareWidth * flareShape;
+  }
+
+  // 3b. TOP FLARE (Lip) with 30deg overhang constraint
+  if (topFlareWidth > 0 && topFlareHeight > 0 && y > (h - topFlareHeight)) {
+    const yRel = (h - y) / topFlareHeight;  // 0 at top, 1 at bottom of zone
+    const tFlare = 1 - yRel;                // 1 at top, 0 at bottom
+
+    // Clamp width so max slope <= tan(30deg)
+    // Quadratic dr/dy max = 2*W/H at tFlare=1 => W_max = tan(30)*H/2
+    const maxWidth = Math.tan(Math.PI / 6) * topFlareHeight / 2;
+    const w = Math.min(topFlareWidth, maxWidth);
+
+    baseRadius += w * tFlare * tFlare;
   }
 
   // 4. VERTICAL RIPPLES (Applied to absolute Y)

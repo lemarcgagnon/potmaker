@@ -128,6 +128,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport })
     }
   };
 
+  const profilePresets: Record<ShapeProfile, Partial<DesignParams>> = {
+    standard:  { profile: 'standard',  curvature: 0,   curveBias: 0.5 },
+    elliptic:  { profile: 'elliptic',  curvature: 3.0, curveBias: 0.5 },
+    bell:      { profile: 'bell',      curvature: 3.0, curveBias: 0.5 },
+    tulip:     { profile: 'tulip',     curvature: 2.0, curveBias: 0.6 },
+  };
+
+  const applyProfile = (p: ShapeProfile) => {
+    setParams(prev => ({ ...prev, ...profilePresets[p] }));
+  };
+
   const handleAutoFitSaucer = () => {
     setParams(prev => ({
       ...prev,
@@ -228,7 +239,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport })
                       {(['standard', 'elliptic', 'bell', 'tulip'] as ShapeProfile[]).map((p) => (
                           <button
                               key={p}
-                              onClick={() => update('profile', p)}
+                              onClick={() => applyProfile(p)}
                               className={`py-1.5 text-[10px] font-bold uppercase rounded border transition-all ${
                                   params.profile === p
                                       ? 'bg-gray-700 border-gray-600 text-white'
@@ -284,6 +295,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport })
                   <div className="mt-4 pt-4 border-t border-gray-800">
                     <DualInput label="Base Flare Width" value={params.baseFlareWidth} min={0} max={8} step={0.1} onChange={(v) => update('baseFlareWidth', v)} unit="cm" />
                     <DualInput label="Base Flare Height" value={params.baseFlareHeight} min={0} max={params.height * 0.5} step={0.1} onChange={(v) => update('baseFlareHeight', v)} unit="cm" />
+                  </div>
+
+                  <div className="mt-4 pt-4 border-t border-gray-800">
+                    <DualInput label="Top Flare Width" value={params.topFlareWidth} min={0} max={8} step={0.1} onChange={(v) => update('topFlareWidth', v)} unit="cm" />
+                    <DualInput label="Top Flare Height" value={params.topFlareHeight} min={0} max={params.height * 0.5} step={0.1} onChange={(v) => update('topFlareHeight', v)} unit="cm" />
+                    {params.topFlareWidth > 0 && params.topFlareHeight > 0 &&
+                     params.topFlareWidth > (Math.tan(Math.PI / 6) * params.topFlareHeight / 2) && (
+                      <p className="text-[10px] text-amber-400 mt-1">
+                        Clamped to {(Math.tan(Math.PI / 6) * params.topFlareHeight / 2).toFixed(1)} cm (30deg limit)
+                      </p>
+                    )}
                   </div>
               </AccordionSection>
 
