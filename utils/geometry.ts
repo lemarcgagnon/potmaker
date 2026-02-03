@@ -161,6 +161,16 @@ const calculatePointData = (
     baseRadius += ribAmplitude * Math.cos(ribCount * thetaTwisted);
   }
 
+  // 7. HEXAGONAL CROSS-SECTION (Polygon with flat sides)
+  if (profile === 'hexagonal') {
+    const N = 6;
+    const sector = (2 * Math.PI) / N;
+    // Angle within the current sector (0 to sector), using twisted theta for twist support
+    const a = ((thetaTwisted % sector) + sector) % sector;
+    // Scale radius so the inscribed circle becomes a hexagon
+    baseRadius *= Math.cos(Math.PI / N) / Math.cos(a - Math.PI / N);
+  }
+
   baseRadius = Math.max(0.1, baseRadius);
 
   // Return Polar Coordinates converted to 3D position
