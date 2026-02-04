@@ -22,7 +22,7 @@
 
 import * as THREE from 'three';
 import { mergeVertices } from 'three-stdlib';
-import { DesignParams } from '../types';
+import { DesignParams } from '../../types';
 
 export interface SuspensionConfig {
   // Position
