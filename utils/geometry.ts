@@ -728,7 +728,9 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
 
                for (let r = hubOuterR; r < maxScanR; r += dr) {
                    const yBot = centerHoleY - (r - holeRadius) * tanA;
-                   if (yBot < 0 || yBot > h) { collisionR = r; foundInnerWall = true; break; }
+                   // If cone slope exits the body, stop scanning but DON'T
+                   // claim we found the wall — the spoke hasn't reached it yet.
+                   if (yBot < 0 || yBot > h) { break; }
 
                    let innermost = Infinity;
                    for (let dTheta = -sweepHalf; dTheta <= sweepHalf; dTheta += sweepStep) {
@@ -744,11 +746,17 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
                    }
                }
 
-               // Fallback: if scanner didn't find wall, compute directly from profile
+               // Fallback: if scanner didn't reach the wall (Y exited body or
+               // maxScanR exceeded), compute inner wall directly from profile.
+               // This guarantees the spoke always reaches the wall.
                if (!foundInnerWall) {
-                   const fallbackY = Math.max(0.01, Math.min(h - 0.01, centerHoleY));
-                   const fp = calculatePointData(fallbackY, theta, params);
-                   collisionR = Math.max(hubOuterR, fp.r - thickness);
+                   const clampedY = Math.max(0.01, Math.min(h - 0.01, centerHoleY));
+                   let innermost = Infinity;
+                   for (let dTheta = -sweepHalf; dTheta <= sweepHalf; dTheta += sweepStep) {
+                       const p = calculatePointData(clampedY, theta + dTheta, params);
+                       innermost = Math.min(innermost, p.r - thickness);
+                   }
+                   collisionR = Math.max(hubOuterR, innermost);
                }
 
                // CONVERGENT HARD CLAMP — always runs, guarantees spoke meets wall
@@ -789,8 +797,10 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
                // Hub end Y (linear at hub outer edge)
                const hubDistFromHole = hubOuterR - holeRadius;
                const hubY = centerHoleY - hubDistFromHole * tanA;
-               // Wall end Y (linear at wall)
-               const wallY = centerHoleY - (wallR - holeRadius) * tanA;
+               // Wall end Y (linear at wall, clamped to body bounds)
+               const wallY = Math.max(0.01, Math.min(h - 0.01,
+                   centerHoleY - (wallR - holeRadius) * tanA
+               ));
 
                const radialRow: { bot: number; top: number }[] = [];
 

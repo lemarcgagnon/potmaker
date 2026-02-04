@@ -141,6 +141,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     'dimensions': true,
     'shape': true,
+    'global': true,
     'surface': false,
     'saucer': false,
     'suspension': false,
@@ -379,8 +380,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
               <AccordionSection
                 title="Global Modifiers"
                 icon={<Wand2 className="w-4 h-4 text-pink-400" />}
-                isOpen={true}
-                onToggle={() => {}} 
+                isOpen={openSections['global'] ?? true}
+                onToggle={() => toggleSection('global')}
               >
                   <DualInput label="Curvature (Bulge)" value={params.curvature} min={-6} max={6} step={0.1} onChange={(v) => update('curvature', v)} />
                   <DualInput label="Curve Height (Waist)" value={params.curveBias} min={0.1} max={0.9} step={0.05} onChange={(v) => update('curveBias', v)} />
