@@ -688,7 +688,7 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
        for (let k = 0; k < arms; k++) {
            const centerTheta = (k / arms) * Math.PI * 2;
            const startTheta = centerTheta - (armWidthRad / 2);
-           const hubOuterR = holeRadius + rimW - 0.05;
+           const hubOuterR = holeRadius + rimW; // exact hub ring radius — keeps spoke attached
 
            // --- Phase 1: Scanner — find collisionR per angular segment ---
            const collisionRs: number[] = [];
