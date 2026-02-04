@@ -15,6 +15,7 @@ import * as THREE from 'three';
 import { mergeVertices } from 'three-stdlib';
 import { DesignParams } from '../../types';
 import { calculatePointData, addQuad } from './profileMath';
+import { generateSuspensionHub, createConfigFromParams } from './suspensionHub';
 
 export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry => {
   const {
@@ -232,8 +233,29 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
       addQ(a, b, c, d);
     }
 
-    // TODO: Suspension hub will be integrated here
-    // See utils/geometry/suspensionHub.ts for R&D module
+    // SUSPENSION HUB (when enabled)
+    if (params.enableSuspension) {
+      // Function to get wall inner radius at any (y, theta)
+      const getWallInnerRadius = (y: number, theta: number): number => {
+        const p = calculatePointData(y, theta, params);
+        return Math.max(0.01, p.r - thickness);
+      };
+
+      const hubConfig = createConfigFromParams(params, getWallInnerRadius);
+      const hubResult = generateSuspensionHub(hubConfig, radialSegments);
+
+      // Append hub vertices (offset indices by current vertex count)
+      const hubVertexOffset = vertexIndex;
+      for (let i = 0; i < hubResult.vertices.length; i += 3) {
+        vertices.push(hubResult.vertices[i], hubResult.vertices[i + 1], hubResult.vertices[i + 2]);
+        vertexIndex++;
+      }
+
+      // Append hub indices (with offset)
+      for (let i = 0; i < hubResult.indices.length; i++) {
+        indices.push(hubResult.indices[i] + hubVertexOffset);
+      }
+    }
   }
 
   const geometry = new THREE.BufferGeometry();

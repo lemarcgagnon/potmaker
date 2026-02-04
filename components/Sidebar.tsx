@@ -565,10 +565,80 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                  </AccordionSection>
               )}
 
-              {/* Suspension Hub — DISABLED FOR REDESIGN
-                  TODO: Re-implement with new geometry system
-                  See utils/suspensionHub.ts for R&D module
-              */}
+              {params.mode === 'shade' && (
+                 <AccordionSection
+                    title="Suspension Hub"
+                    icon={<Lightbulb className="w-4 h-4 text-yellow-400" />}
+                    isOpen={openSections['suspension']}
+                    onToggle={() => toggleSection('suspension')}
+                 >
+                    <div className="flex items-center justify-between mb-4">
+                      <span className="text-xs text-gray-400">Enable Hub</span>
+                      <button
+                        onClick={() => update('enableSuspension', !params.enableSuspension)}
+                        className={`w-10 h-5 rounded-full transition-colors ${params.enableSuspension ? 'bg-blue-600' : 'bg-gray-700'}`}
+                      >
+                        <div className={`w-4 h-4 bg-white rounded-full shadow transition-transform ${params.enableSuspension ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                      </button>
+                    </div>
+
+                    {params.enableSuspension && (
+                      <>
+                        <DualInput
+                          label="Height Position"
+                          value={params.suspensionHeight * 100}
+                          min={30} max={95} step={5}
+                          onChange={(v) => update('suspensionHeight', v / 100)}
+                          unit="%"
+                        />
+                        <DualInput
+                          label="Hole Diameter"
+                          value={params.suspensionHoleSize}
+                          min={2.5} max={6} step={0.1}
+                          onChange={(v) => update('suspensionHoleSize', v)}
+                          unit="cm" displayUnit={displayUnit}
+                        />
+                        <DualInput
+                          label="Hub Width"
+                          value={params.suspensionRimWidth}
+                          min={0.5} max={3} step={0.1}
+                          onChange={(v) => update('suspensionRimWidth', v)}
+                          unit="cm" displayUnit={displayUnit}
+                        />
+                        <DualInput
+                          label="Thickness"
+                          value={params.suspensionThickness}
+                          min={0.2} max={1} step={0.05}
+                          onChange={(v) => update('suspensionThickness', v)}
+                          unit="cm" displayUnit={displayUnit}
+                        />
+                        <DualInput
+                          label="Spoke Count"
+                          value={params.suspensionRibCount}
+                          min={2} max={8} step={1}
+                          onChange={(v) => update('suspensionRibCount', v)}
+                        />
+                        <DualInput
+                          label="Spoke Width"
+                          value={params.suspensionRibWidth}
+                          min={15} max={80} step={5}
+                          onChange={(v) => update('suspensionRibWidth', v)}
+                          unit="deg"
+                        />
+                        <DualInput
+                          label="Slope Angle"
+                          value={params.suspensionAngle}
+                          min={45} max={70} step={1}
+                          onChange={(v) => update('suspensionAngle', v)}
+                          unit="deg"
+                        />
+                        <p className="text-[10px] text-gray-500 mt-2">
+                          All surfaces ≥45° for support-free FDM printing
+                        </p>
+                      </>
+                    )}
+                 </AccordionSection>
+              )}
            </div>
         )}
 
