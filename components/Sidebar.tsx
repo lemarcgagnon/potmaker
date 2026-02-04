@@ -3,8 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import { DesignParams, DEFAULT_PARAMS, ShapeProfile } from '../types';
 import { 
-  Download, Box, Layers, Palette, Cylinder, Package, Spline, 
-  Waves, Tornado, Wand2, Eye, EyeOff, RotateCcw, 
+  Download, Box, Layers, Palette, Cylinder, Package, Spline, Camera,
+  Waves, Tornado, Wand2, Eye, EyeOff, RotateCcw,
   ChevronsUp, ChevronsDown, Settings2, Sliders, ChevronDown, ChevronRight, Lightbulb
 } from 'lucide-react';
 
@@ -12,6 +12,7 @@ interface SidebarProps {
   params: DesignParams;
   setParams: React.Dispatch<React.SetStateAction<DesignParams>>;
   onExport: (type: 'body' | 'saucer' | 'all') => void;
+  onScreenshot?: () => void;
 }
 
 // --- UNIT SYSTEM ---
@@ -132,7 +133,7 @@ const AccordionSection: React.FC<{
 
 type Tab = 'form' | 'details' | 'finish';
 
-export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, onScreenshot }) => {
   const [activeTab, setActiveTab] = useState<Tab>('form');
   const [displayUnit, setDisplayUnit] = useState<DisplayUnit>('cm');
 
@@ -532,6 +533,20 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport })
                      <DualInput label="Explode Distance" value={params.saucerSeparation} min={0} max={10} step={0.5} onChange={(v) => update('saucerSeparation', v)} unit="cm" displayUnit={displayUnit} />
                  </div>
                )}
+
+               <div className="p-4 bg-gray-900 rounded-lg border border-gray-800">
+                  <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                     <Camera className="w-4 h-4 text-cyan-400" /> Product Image
+                  </h3>
+                  <button
+                     onClick={onScreenshot}
+                     className="w-full py-2.5 bg-gray-800 hover:bg-gray-700 text-white text-sm font-semibold rounded-lg border border-gray-700 flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
+                  >
+                     <Camera className="w-4 h-4" />
+                     Save Image (PNG)
+                  </button>
+                  <p className="text-[10px] text-gray-500 mt-2">Captures the current 3D view as displayed</p>
+               </div>
             </div>
         )}
 

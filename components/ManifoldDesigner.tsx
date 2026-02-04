@@ -154,6 +154,16 @@ export const ManifoldDesigner: React.FC<ManifoldDesignerProps> = ({
     if (onExportComplete) onExportComplete();
   };
 
+  const handleScreenshot = () => {
+    const canvas = document.querySelector('canvas');
+    if (!canvas) return;
+    const timestamp = getTimestamp();
+    const link = document.createElement('a');
+    link.download = `manifold_${params.mode}_${timestamp}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  };
+
   const toggleParam = (key: keyof DesignParams) => {
       setParams(p => ({...p, [key]: !p[key as keyof DesignParams]}));
   };
@@ -212,7 +222,7 @@ export const ManifoldDesigner: React.FC<ManifoldDesignerProps> = ({
 
       {/* Sidebar Controls */}
       <div className="order-1 md:order-2 h-[45vh] md:h-full w-full md:w-[360px] shadow-2xl z-20 flex-shrink-0 relative">
-        <Sidebar params={params} setParams={setParams} onExport={handleExport} />
+        <Sidebar params={params} setParams={setParams} onExport={handleExport} onScreenshot={handleScreenshot} />
       </div>
     </div>
   );
