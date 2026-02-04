@@ -621,6 +621,26 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
            return archDrop * (1 - rise);
        };
 
+       // Pre-compute which hub ring segments are covered by spokes
+       // so we can skip outer-wall faces there (the spoke hub cap replaces them)
+       const hubStep = (2 * Math.PI) / radialSegments;
+       const spokeSegmentSet = new Set<number>();
+       const spokeStartIndices: number[] = [];
+       const spokeEndIndices: number[] = [];
+
+       for (let k = 0; k < arms; k++) {
+           const cTheta = (k / arms) * Math.PI * 2;
+           const sTheta = cTheta - armWidthRad / 2;
+           const eTheta = sTheta + armWidthRad;
+           const si = Math.round(sTheta / hubStep);
+           const ei = Math.round(eTheta / hubStep);
+           spokeStartIndices.push(si);
+           spokeEndIndices.push(ei);
+           for (let j = si; j < ei; j++) {
+               spokeSegmentSet.add(((j % radialSegments) + radialSegments) % radialSegments);
+           }
+       }
+
        // --- A. GENERATE SOLID HUB RING (360 degrees) ---
        // The outer bottom edge incorporates corner arches — it dips down
        // near spoke edges, forming self-supporting brackets for FDM printing.
@@ -656,20 +676,23 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
            vertices.push(hubOuterR * Math.cos(theta), hubOuterY + suspThick, hubOuterR * Math.sin(theta));
            hubOuterTop.push(vertexIndex++);
        }
-       
-       // Build Hub Faces
+
+       // Build Hub Faces — skip outer wall quads where spokes attach
        for (let j = 0; j < radialSegments; j++) {
            addQuad(hubOuterBottom[j], hubOuterBottom[j+1], hubInnerBottom[j+1], hubInnerBottom[j], true);
            addQuad(hubOuterTop[j], hubOuterTop[j+1], hubInnerTop[j+1], hubInnerTop[j]);
            addQuad(hubInnerBottom[j], hubInnerBottom[j+1], hubInnerTop[j+1], hubInnerTop[j]);
-           addQuad(hubOuterBottom[j], hubOuterBottom[j+1], hubOuterTop[j+1], hubOuterTop[j], true); 
+           // Only build outer wall where spokes DON'T connect
+           if (!spokeSegmentSet.has(j)) {
+               addQuad(hubOuterBottom[j], hubOuterBottom[j+1], hubOuterTop[j+1], hubOuterTop[j], true);
+           }
        }
 
        // --- B. GENERATE ARCHED SPOKES (Hub → Wall, self-supporting for FDM) ---
        // Spokes use radial subdivisions with a power-curve arch so the geometry
        // is steep (nearly vertical) at the hub and gentle at the wall.
        // This ensures every layer during FDM printing has minimal overhang.
-       const segmentsPerArm = Math.max(2, Math.floor(radialSegments / arms * (armWidthDeg / 360)));
+       // Spoke angular vertices snap to hub ring grid for perfect vertex fusion.
 
        // Constants for radial scanning
        const tanA = Math.tan(angleRad);
@@ -686,15 +709,18 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
        const sweepStep = Math.max(0.03, sweepHalf / 6); // ~6 samples per side
 
        for (let k = 0; k < arms; k++) {
-           const centerTheta = (k / arms) * Math.PI * 2;
-           const startTheta = centerTheta - (armWidthRad / 2);
            const hubOuterR = holeRadius + rimW; // exact hub ring radius — keeps spoke attached
+
+           // Spoke angular positions snapped to hub ring grid
+           const spokeStartIdx = spokeStartIndices[k];
+           const spokeEndIdx = spokeEndIndices[k];
+           const segmentsPerArm = Math.max(2, spokeEndIdx - spokeStartIdx);
 
            // --- Phase 1: Scanner — find collisionR per angular segment ---
            const collisionRs: number[] = [];
 
            for (let s = 0; s <= segmentsPerArm; s++) {
-               const theta = startTheta + (s / segmentsPerArm) * armWidthRad;
+               const theta = (spokeStartIdx + s) * hubStep;
 
                // RADIAL WALL SCANNER (multi-angle conservative)
                let collisionR = hubOuterR;
@@ -718,29 +744,36 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
                    }
                }
 
-               // CONVERGENT HARD CLAMP (wide angular sweep)
-               if (foundInnerWall) {
-                   let desiredR = collisionR + anchorDepth;
-                   for (let iter = 0; iter < 3; iter++) {
-                       const yBotAtTip = centerHoleY - (desiredR - holeRadius) * tanA;
-                       const yTopAtTip = yBotAtTip + suspThick;
-
-                       let strictestLimit = Infinity;
-                       for (let dTheta = -sweepHalf; dTheta <= sweepHalf; dTheta += sweepStep) {
-                           const checkTheta = theta + dTheta;
-                           const pBot = calculatePointData(yBotAtTip, checkTheta, params);
-                           const pTop = calculatePointData(yTopAtTip, checkTheta, params);
-                           const limit = Math.min(pBot.r, pTop.r);
-                           if (limit < strictestLimit) strictestLimit = limit;
-                       }
-
-                       const hardLimitR = strictestLimit - safetyMargin;
-                       if (desiredR > hardLimitR) desiredR = hardLimitR;
-                   }
-                   collisionRs.push(desiredR);
-               } else {
-                   collisionRs.push(maxScanR);
+               // Fallback: if scanner didn't find wall, compute directly from profile
+               if (!foundInnerWall) {
+                   const fallbackY = Math.max(0.01, Math.min(h - 0.01, centerHoleY));
+                   const fp = calculatePointData(fallbackY, theta, params);
+                   collisionR = Math.max(hubOuterR, fp.r - thickness);
                }
+
+               // CONVERGENT HARD CLAMP — always runs, guarantees spoke meets wall
+               let desiredR = collisionR + anchorDepth;
+               for (let iter = 0; iter < 3; iter++) {
+                   const yBotAtTip = centerHoleY - (desiredR - holeRadius) * tanA;
+                   const yTopAtTip = yBotAtTip + suspThick;
+
+                   let strictestLimit = Infinity;
+                   for (let dTheta = -sweepHalf; dTheta <= sweepHalf; dTheta += sweepStep) {
+                       const checkTheta = theta + dTheta;
+                       const pBot = calculatePointData(
+                           Math.max(0.01, Math.min(h - 0.01, yBotAtTip)), checkTheta, params
+                       );
+                       const pTop = calculatePointData(
+                           Math.max(0.01, Math.min(h - 0.01, yTopAtTip)), checkTheta, params
+                       );
+                       const limit = Math.min(pBot.r, pTop.r);
+                       if (limit < strictestLimit) strictestLimit = limit;
+                   }
+
+                   const hardLimitR = strictestLimit - safetyMargin;
+                   if (desiredR > hardLimitR) desiredR = hardLimitR;
+               }
+               collisionRs.push(Math.max(hubOuterR + 0.1, desiredR));
            }
 
            // --- Phase 2: Generate 2D vertex grid with arch curve ---
@@ -750,7 +783,7 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
            const armGrid: { bot: number; top: number }[][] = [];
 
            for (let s = 0; s <= segmentsPerArm; s++) {
-               const theta = startTheta + (s / segmentsPerArm) * armWidthRad;
+               const theta = (spokeStartIdx + s) * hubStep;
                const wallR = collisionRs[s];
 
                // Hub end Y (linear at hub outer edge)
