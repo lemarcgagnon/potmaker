@@ -1,11 +1,12 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { DesignParams, DEFAULT_PARAMS, ShapeProfile } from '../types';
-import { 
+import { DesignParams, DEFAULT_PARAMS, ShapeProfile, SkinPatternType, SkinPatternMode } from '../types';
+import {
   Download, Box, Layers, Palette, Cylinder, Package, Spline, Camera,
   Waves, Tornado, Wand2, Eye, EyeOff, RotateCcw,
-  ChevronsUp, ChevronsDown, Settings2, Sliders, ChevronDown, ChevronRight, Lightbulb
+  ChevronsUp, ChevronsDown, Sliders, ChevronDown, ChevronRight, Lightbulb,
+  Hexagon
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -143,6 +144,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
     'shape': true,
     'global': true,
     'surface': false,
+    'skinPattern': false,
     'saucer': false,
     'suspension': false,
     'view': true
@@ -432,6 +434,114 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                   </div>
               </AccordionSection>
 
+              <AccordionSection
+                title="Skin Pattern"
+                icon={<Hexagon className="w-4 h-4 text-emerald-400" />}
+                isOpen={openSections['skinPattern']}
+                onToggle={() => toggleSection('skinPattern')}
+              >
+                  <div className="mb-4">
+                     <label className="text-xs font-semibold text-gray-400 uppercase mb-2 block">Pattern</label>
+                     <div className="grid grid-cols-4 gap-1">
+                        {([
+                          ['none', 'Off'],
+                          ['diamond', 'Diam'],
+                          ['hexgrid', 'Hex'],
+                          ['asanoha', 'Asan'],
+                          ['seigaiha', 'Seig'],
+                          ['shippo', 'Ship'],
+                          ['yagasuri', 'Yaga'],
+                        ] as [SkinPatternType, string][]).map(([id, label]) => (
+                            <button
+                                key={id}
+                                onClick={() => update('skinPattern', id)}
+                                className={`py-1.5 text-[10px] font-bold uppercase rounded border transition-all ${
+                                    params.skinPattern === id
+                                        ? 'bg-emerald-600/20 border-emerald-500 text-emerald-100'
+                                        : 'bg-gray-900 border-gray-800 text-gray-600 hover:text-gray-400'
+                                }`}
+                            >
+                                {label}
+                            </button>
+                        ))}
+                     </div>
+                  </div>
+
+                  {params.skinPattern !== 'none' && (
+                    <>
+                      <div className="mb-4">
+                         <label className="text-xs font-semibold text-gray-400 uppercase mb-2 block">Mode</label>
+                         <div className="grid grid-cols-3 gap-1">
+                            {([
+                              ['embossed', 'Emboss'],
+                              ['carved', 'Carved'],
+                              ['pierced', 'Pierce'],
+                            ] as [SkinPatternMode, string][]).map(([id, label]) => (
+                                <button
+                                    key={id}
+                                    onClick={() => update('skinMode', id)}
+                                    className={`py-1.5 text-[10px] font-bold uppercase rounded border transition-all ${
+                                        params.skinMode === id
+                                            ? 'bg-gray-700 border-gray-600 text-white'
+                                            : 'bg-gray-900 border-gray-800 text-gray-600 hover:text-gray-400'
+                                    }`}
+                                >
+                                    {label}
+                                </button>
+                            ))}
+                         </div>
+                      </div>
+
+                      <div className="flex items-center justify-between mb-4">
+                        <span className="text-xs font-semibold text-gray-400 uppercase">Invert Pattern</span>
+                        <button
+                          onClick={() => update('skinInvert', !params.skinInvert)}
+                          className={`w-9 h-5 rounded-full transition-colors relative ${
+                            params.skinInvert ? 'bg-emerald-600' : 'bg-gray-700'
+                          }`}
+                        >
+                          <span className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-transform ${
+                            params.skinInvert ? 'left-5' : 'left-1'
+                          }`} />
+                        </button>
+                      </div>
+
+                      <DualInput label="Tile Size" value={params.skinScale} min={0.5} max={6.0} step={0.1} onChange={(v) => update('skinScale', v)} unit="cm" displayUnit={displayUnit} />
+                      <DualInput label="Depth" value={params.skinDepth} min={0.05} max={0.5} step={0.01} onChange={(v) => update('skinDepth', v)} unit="cm" displayUnit={displayUnit} />
+                      <DualInput label="Line Width" value={params.skinLineWidth * 100} min={10} max={60} step={1} onChange={(v) => update('skinLineWidth', v / 100)} unit="%" />
+                      {params.skinLineWidth < 0.2 && (
+                        <p className="text-[10px] text-amber-400 mt-1">
+                          Thin lines below 0.8mm may not print reliably on FDM
+                        </p>
+                      )}
+                      <DualInput label="Rotation" value={params.skinRotation} min={0} max={90} step={1} onChange={(v) => update('skinRotation', v)} unit="deg" />
+                      <DualInput label="Connection Width" value={params.skinConnectionWidth} min={0.04} max={0.5} step={0.01} onChange={(v) => update('skinConnectionWidth', v)} unit="cm" displayUnit={displayUnit} />
+                      {(() => {
+                        const physicalLW = params.skinScale * params.skinLineWidth;
+                        const connW = params.skinConnectionWidth;
+                        return physicalLW < connW ? (
+                          <p className="text-[10px] text-gray-400 mt-1">
+                            Line width boosted to {(connW * 10).toFixed(1)}mm to maintain connections
+                          </p>
+                        ) : null;
+                      })()}
+
+                      <DualInput label="Smoothing" value={params.skinSmoothing} min={1} max={20} step={0.5} onChange={(v) => update('skinSmoothing', v)} />
+                      {params.skinSmoothing >= 6 && (
+                        <p className="text-[10px] text-amber-400 mt-1">
+                          High smoothing — may be slow on complex designs
+                        </p>
+                      )}
+
+                      {params.skinMode === 'pierced' && (
+                        <p className="text-[10px] text-gray-500 mt-2">
+                          Pierce auto-suppressed on surfaces steeper than 35°
+                        </p>
+                      )}
+                    </>
+                  )}
+              </AccordionSection>
+
               {params.mode === 'pot' && (
                  <AccordionSection
                     title="Saucer Base"
@@ -455,48 +565,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                  </AccordionSection>
               )}
 
-              {params.mode === 'shade' && (
-                 <AccordionSection
-                    title="Suspension Hub"
-                    icon={<Settings2 className="w-4 h-4 text-yellow-400" />}
-                    isOpen={openSections['suspension']}
-                    onToggle={() => toggleSection('suspension')}
-                 >
-                    <div className="flex items-center justify-between mb-4">
-                        <span className="text-xs font-semibold text-gray-400 uppercase">Enable Hardware</span>
-                        <button
-                            onClick={() => update('enableSuspension', !params.enableSuspension)}
-                            className={`w-9 h-5 rounded-full transition-colors relative ${
-                            params.enableSuspension ? 'bg-yellow-600' : 'bg-gray-700'
-                            }`}
-                        >
-                            <span className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-transform ${
-                            params.enableSuspension ? 'left-5' : 'left-1'
-                            }`} />
-                        </button>
-                    </div>
-
-                    {params.enableSuspension && (
-                        <div className="space-y-4">
-                            <DualInput label="Height Position" value={params.suspensionHeight * 100} min={5} max={95} step={1} onChange={(v) => update('suspensionHeight', v / 100)} unit="%" />
-                            <DualInput label="Hole Diameter" value={params.suspensionHoleSize} min={2.5} max={5.0} step={0.1} onChange={(v) => update('suspensionHoleSize', v)} unit="cm" displayUnit={displayUnit} />
-                            <div className="h-px bg-gray-800" />
-                            <DualInput label="Spoke Angle" value={params.suspensionAngle} min={15} max={75} step={1} onChange={(v) => update('suspensionAngle', v)} unit="deg" />
-                            <DualInput label="Spoke Arch" value={params.suspensionArchPower} min={0.1} max={1.0} step={0.05} onChange={(v) => update('suspensionArchPower', v)} />
-                            {params.suspensionArchPower < 0.3 && (
-                               <p className="text-[10px] text-amber-400 mt-1">Very steep arch — check clearance in slicer</p>
-                            )}
-                            <div className="h-px bg-gray-800" />
-                            <DualInput label="Spoke Count" value={params.suspensionRibCount} min={2} max={8} step={1} onChange={(v) => update('suspensionRibCount', v)} />
-                            <DualInput label="Spoke Width" value={params.suspensionRibWidth} min={10} max={90} step={5} onChange={(v) => update('suspensionRibWidth', v)} unit="deg" />
-                            <div className="h-px bg-gray-800" />
-                            <p className="text-[10px] uppercase text-gray-500 font-bold mb-2 mt-2">Corner Arches</p>
-                            <DualInput label="Arch Drop" value={params.suspensionButtressExtent} min={0} max={1.0} step={0.05} onChange={(v) => update('suspensionButtressExtent', v)} unit="cm" displayUnit={displayUnit} />
-                            <DualInput label="Arch Curve" value={params.suspensionButtressArc} min={0.3} max={3.0} step={0.1} onChange={(v) => update('suspensionButtressArc', v)} />
-                        </div>
-                    )}
-                 </AccordionSection>
-              )}
+              {/* Suspension Hub — DISABLED FOR REDESIGN
+                  TODO: Re-implement with new geometry system
+                  See utils/suspensionHub.ts for R&D module
+              */}
            </div>
         )}
 

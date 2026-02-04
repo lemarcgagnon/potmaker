@@ -1,5 +1,7 @@
 export type DesignMode = 'pot' | 'shade';
 export type ShapeProfile = 'standard' | 'elliptic' | 'bell' | 'tulip' | 'cone' | 'barrel' | 'hourglass' | 'trumpet' | 'ogee' | 'vase' | 'polygon';
+export type SkinPatternType = 'none' | 'asanoha' | 'seigaiha' | 'shippo' | 'yagasuri' | 'hexgrid' | 'diamond';
+export type SkinPatternMode = 'embossed' | 'carved' | 'pierced';
 
 export interface DesignParams {
   mode: DesignMode;
@@ -69,6 +71,17 @@ export interface DesignParams {
   ribCount: number; // Number of decorative ribs/flutes
   ribAmplitude: number; // Depth of the ribs
 
+  // Skin Pattern (Kumiko-style decorative patterns)
+  skinPattern: SkinPatternType;
+  skinMode: SkinPatternMode;
+  skinScale: number;      // Tile size in cm on the surface
+  skinDepth: number;      // Depth of emboss/carve in cm
+  skinLineWidth: number;  // Line width as fraction 0.1–0.6
+  skinRotation: number;   // Pattern rotation in degrees
+  skinConnectionWidth: number; // Minimum solid connection width in cm
+  skinInvert: boolean;         // Swap inside/outside of pattern
+  skinSmoothing: number;       // Resolution multiplier for pattern edges (1–4)
+
   // View Options
   showBody: boolean;
   showSaucer: boolean;
@@ -108,7 +121,7 @@ export const DEFAULT_PARAMS: DesignParams = {
   suspensionRibCount: 4, 
   suspensionRibWidth: 40,
   suspensionRimWidth: 1.0, // 1cm solid hub
-  suspensionAnchorDepth: 0.2, // 2mm embed default
+  suspensionAnchorDepth: 0.4, // 4mm embed default
   suspensionArchPower: 0.35, // Pronounced arch by default
   suspensionButtressExtent: 0.3, // Small corner fillets
   suspensionButtressArc: 0.5, // Moderate arch shape
@@ -133,6 +146,17 @@ export const DEFAULT_PARAMS: DesignParams = {
   twist: 0,
   ribCount: 0,
   ribAmplitude: 0,
+
+  // Skin Pattern Defaults
+  skinPattern: 'none',
+  skinMode: 'embossed',
+  skinScale: 2.0,
+  skinDepth: 0.1,
+  skinLineWidth: 0.3,
+  skinRotation: 0,
+  skinConnectionWidth: 0.08,
+  skinInvert: false,
+  skinSmoothing: 2,
 
   showBody: true,
   showSaucer: true,

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeVertices } from 'three-stdlib';
 import { DesignParams } from '../types';
+import { evaluateSkinPattern } from './patterns';
 
 /**
  * Calculates the exact radius at a specific point in 3D space.
@@ -165,6 +166,14 @@ const calculatePointData = (
     baseRadius += ribAmplitude * Math.cos(ribCount * thetaTwisted);
   }
 
+  // 6b. SKIN PATTERN (Kumiko-style decorative surface pattern)
+  let pierceAmount = 0;
+  if (params.skinPattern !== 'none') {
+    const skinResult = evaluateSkinPattern(y, thetaTwisted, baseRadius, params);
+    baseRadius += skinResult.delta;
+    pierceAmount = skinResult.pierce;
+  }
+
   // 7. POLYGON CROSS-SECTION (Flat-sided: triangle, square, hex, etc.)
   if (profile === 'polygon') {
     const N = Math.max(3, Math.min(12, Math.round(params.polygonSides)));
@@ -178,8 +187,8 @@ const calculatePointData = (
   // Return Polar Coordinates converted to 3D position
   const x = baseRadius * Math.cos(theta);
   const z = baseRadius * Math.sin(theta);
-  
-  return { x, y, z, r: baseRadius };
+
+  return { x, y, z, r: baseRadius, pierce: pierceAmount };
 };
 
 // --- GEOMETRY GENERATORS ---
@@ -313,8 +322,8 @@ export const generateSaucerGeometry = (params: DesignParams): THREE.BufferGeomet
 };
 
 export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry => {
-  const { 
-    height, radialSegments, thickness, mode, 
+  const {
+    height, radialSegments: baseRadialSegments, thickness, mode,
     rimAngle, rimAngleBottom, 
     baseFlareWidth, baseFlareHeight, 
     drainageHoleSize, bottomLift,
@@ -332,14 +341,38 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
 
   // Dynamic height segments — match saucer's approach instead of hardcoding 200.
   // Too many segments create degenerate thin triangles that confuse slicers.
-  const heightSegments = Math.min(200, Math.max(40, Math.ceil(height * 8)));
+  let heightSegments = Math.min(200, Math.max(40, Math.ceil(height * 8)));
+  let radialSegments = baseRadialSegments;
+
+  // Boost resolution for skin patterns so tile detail is captured
+  if (params.skinPattern !== 'none') {
+    const scale = Math.max(0.1, params.skinScale);
+    const smooth = Math.max(1, Math.min(20, params.skinSmoothing ?? 2));
+    const segsPerTile = Math.ceil(8 * smooth);
+
+    // Height: tiles along height × segments per tile
+    const tilesAlongHeight = height / scale;
+    const patternHeightSegs = Math.ceil(tilesAlongHeight * segsPerTile);
+    heightSegments = Math.min(2000, Math.max(heightSegments, patternHeightSegs));
+
+    // Radial: tiles around circumference × segments per tile
+    const avgRadius = (radiusTop + radiusBottom) / 2;
+    const circumference = 2 * Math.PI * avgRadius;
+    const tilesAroundCirc = circumference / scale;
+    const patternRadialSegs = Math.ceil(tilesAroundCirc * segsPerTile);
+    radialSegments = Math.min(2000, Math.max(radialSegments, patternRadialSegs));
+  }
   
   const vertices: number[] = [];
   const indices: number[] = [];
   
   const gridOuter: number[] = [];
   const gridInner: number[] = [];
-  
+  const pierceOuter: number[] = [];
+  const pierceInner: number[] = [];
+  const cols = radialSegments + 1;
+  const hasPierce = params.skinPattern !== 'none' && params.skinMode === 'pierced';
+
   let vertexIndex = 0;
 
   // 1. Outer Shell
@@ -347,9 +380,53 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
     const y = (i / heightSegments) * height;
     for (let j = 0; j <= radialSegments; j++) {
       const theta = (j / radialSegments) * Math.PI * 2;
-      const { x, z } = calculatePointData(y, theta, params);
-      vertices.push(x, y, z);
+      const p = calculatePointData(y, theta, params);
+      const pierceVal = p.pierce ?? 0;
+
+      // Pierce: push outer shell INWARD in void areas so texture is on the outside
+      let rOuter = p.r;
+      if (hasPierce && pierceVal > 0) {
+        rOuter = Math.max(0.01, p.r - thickness * pierceVal);
+      }
+
+      vertices.push(rOuter * Math.cos(theta), y, rOuter * Math.sin(theta));
       gridOuter.push(vertexIndex++);
+      pierceOuter.push(pierceVal);
+    }
+  }
+
+  // --- FDM 35° overhang suppression for pierce mode ---
+  // Compute local wall angle from vertex positions and suppress pierce on steep surfaces
+  if (hasPierce) {
+    const maxPierceAngle = 35 * Math.PI / 180;
+    for (let i = 0; i <= heightSegments; i++) {
+      for (let j = 0; j <= radialSegments; j++) {
+        const idx = i * cols + j;
+        if (pierceOuter[idx] <= 0.01) continue;
+
+        const iBelow = Math.max(0, i - 1);
+        const iAbove = Math.min(heightSegments, i + 1);
+        const idxBelow = iBelow * cols + j;
+        const idxAbove = iAbove * cols + j;
+
+        const viB = gridOuter[idxBelow] * 3;
+        const viA = gridOuter[idxAbove] * 3;
+        const rBelow = Math.sqrt(vertices[viB] ** 2 + vertices[viB + 2] ** 2);
+        const rAbove = Math.sqrt(vertices[viA] ** 2 + vertices[viA + 2] ** 2);
+        const yBelow = vertices[viB + 1];
+        const yAbove = vertices[viA + 1];
+
+        const dy = yAbove - yBelow;
+        if (dy > 0.001) {
+          const wallAngle = Math.atan2(Math.abs(rAbove - rBelow), dy);
+          if (wallAngle > maxPierceAngle) {
+            pierceOuter[idx] = 0;
+          } else if (wallAngle > maxPierceAngle * 0.7) {
+            const fade = 1 - (wallAngle - maxPierceAngle * 0.7) / (maxPierceAngle * 0.3);
+            pierceOuter[idx] *= fade;
+          }
+        }
+      }
     }
   }
 
@@ -357,7 +434,7 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
   // Safety: Ensure rim deltas don't exceed height
   const rimDeltaTop = thickness * Math.tan(rimAngle * (Math.PI / 180));
   let innerTopY = height - rimDeltaTop;
-  
+
   const rimDeltaBottom = thickness * Math.tan(rimAngleBottom * (Math.PI / 180));
   const baseInnerY = mode === 'pot' ? potFloorThickness : 0;
   let innerBottomY = baseInnerY + rimDeltaBottom;
@@ -374,16 +451,19 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
     for (let j = 0; j <= radialSegments; j++) {
       const theta = (j / radialSegments) * Math.PI * 2;
       const p = calculatePointData(y, theta, params);
+      // Use OUTER shell's pierce value for face culling alignment
+      const pierceT = hasPierce ? pierceOuter[i * cols + j] : 0;
+      // Inner shell stays at constant thickness (smooth inside surface)
       const rInner = Math.max(0.01, p.r - thickness);
       const xInner = rInner * Math.cos(theta);
       const zInner = rInner * Math.sin(theta);
-      
+
       vertices.push(xInner, y, zInner);
       gridInner.push(vertexIndex++);
+      pierceInner.push(pierceT);
     }
   }
 
-  const cols = radialSegments + 1;
   const addQuad = (a: number, b: number, c: number, d: number, flipped = false) => {
     if (flipped) {
       indices.push(a, d, c);
@@ -394,11 +474,24 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
     }
   };
 
+  // Pierce threshold for face culling
+  const pierceThreshold = 0.5;
+
   // Outer Faces
   for (let i = 0; i < heightSegments; i++) {
     for (let j = 0; j < radialSegments; j++) {
       const row1 = i * cols + j;
       const row2 = (i + 1) * cols + j;
+
+      // Skip faces where all 4 corners are heavily pierced
+      if (hasPierce) {
+        const minP = Math.min(
+          pierceOuter[row1], pierceOuter[row1 + 1],
+          pierceOuter[row2], pierceOuter[row2 + 1]
+        );
+        if (minP > pierceThreshold) continue;
+      }
+
       const a = gridOuter[row1];
       const b = gridOuter[row1 + 1];
       const c = gridOuter[row2 + 1];
@@ -412,6 +505,16 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
     for (let j = 0; j < radialSegments; j++) {
       const row1 = i * cols + j;
       const row2 = (i + 1) * cols + j;
+
+      // Skip faces where all 4 corners are heavily pierced
+      if (hasPierce) {
+        const minP = Math.min(
+          pierceInner[row1], pierceInner[row1 + 1],
+          pierceInner[row2], pierceInner[row2 + 1]
+        );
+        if (minP > pierceThreshold) continue;
+      }
+
       const a = gridInner[row1];
       const b = gridInner[row1 + 1];
       const c = gridInner[row2 + 1];
@@ -556,323 +659,9 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
       addQuad(a, b, c, d);
     }
 
-    // 2. Suspension System (VENTED SPIDER ARMS + HUB)
-    if (enableSuspension && suspensionHoleSize > 0) {
-       // Reference Config
-       const centerHoleY = height * suspensionHeight;
-       const suspThick = suspensionThickness;
-       const holeRadius = suspensionHoleSize / 2;
-       const angleRad = (suspensionAngle || 45) * (Math.PI / 180);
-       const rimW = Math.max(0.1, suspensionRimWidth || 1.0); // Solid Hub Width
-       
-       const anchorDepth = suspensionAnchorDepth !== undefined ? suspensionAnchorDepth : 0.2;
-       const safetyMargin = 0.05;
-
-       // Pre-calculate Hub Heights
-       // Hub Inner (at hole)
-       const hubInnerY = centerHoleY;
-       // Hub Outer (at hole + rim)
-       const dyHub = rimW * Math.tan(angleRad);
-       const hubOuterY = centerHoleY - dyHub;
-
-       // Pre-compute spoke layout (needed for corner arches in hub ring)
-       const arms = Math.max(2, Math.min(12, suspensionRibCount || 4));
-       const armWidthDeg = Math.max(5, Math.min(90, suspensionRibWidth || 40));
-       const armWidthRad = armWidthDeg * (Math.PI / 180);
-       const halfArm = armWidthRad / 2;
-       const gapSpan = (2 * Math.PI / arms) - armWidthRad;
-       const halfGap = Math.max(0.01, gapSpan / 2);
-
-       // Corner arch parameters
-       const archDrop = params.suspensionButtressExtent ?? 1.5;
-       const archCurvePow = Math.max(0.3, Math.min(3.0, params.suspensionButtressArc ?? 1.0));
-
-       // Compute arch offset at any angle — smoothly drops below hub ring
-       // near spoke edges, zero at spoke centers and at vent-gap midpoints.
-       const getArchOffset = (theta: number): number => {
-           if (archDrop <= 0 || gapSpan <= 0.01) return 0;
-
-           // Find signed distance to nearest spoke edge
-           // Positive = in vent gap, Negative = inside spoke
-           let minSignedDist = Infinity;
-           for (let kk = 0; kk < arms; kk++) {
-               const center = (kk / arms) * Math.PI * 2;
-               // Signed angular distance from spoke center
-               let d = ((theta - center) % (Math.PI * 2) + Math.PI * 3) % (Math.PI * 2) - Math.PI;
-               const edgeDist = Math.abs(d) - halfArm; // >0 outside, <0 inside
-               if (Math.abs(edgeDist) < Math.abs(minSignedDist)) {
-                   minSignedDist = edgeDist;
-               }
-           }
-
-           if (minSignedDist >= halfGap) return 0; // at or past mid-gap
-
-           if (minSignedDist <= 0) {
-               // Inside spoke — smooth transition zone near the edge
-               const transZone = halfArm * 0.3;
-               if (-minSignedDist > transZone) return 0;
-               const t = 1 - (-minSignedDist / transZone);
-               return archDrop * t * t; // quadratic ease-in
-           }
-
-           // In vent gap — arch rises from max drop to zero at mid-gap
-           const frac = minSignedDist / halfGap;
-           const rise = Math.pow(Math.sin(Math.PI / 2 * frac), archCurvePow);
-           return archDrop * (1 - rise);
-       };
-
-       // Pre-compute which hub ring segments are covered by spokes
-       // so we can skip outer-wall faces there (the spoke hub cap replaces them)
-       const hubStep = (2 * Math.PI) / radialSegments;
-       const spokeSegmentSet = new Set<number>();
-       const spokeStartIndices: number[] = [];
-       const spokeEndIndices: number[] = [];
-
-       for (let k = 0; k < arms; k++) {
-           const cTheta = (k / arms) * Math.PI * 2;
-           const sTheta = cTheta - armWidthRad / 2;
-           const eTheta = sTheta + armWidthRad;
-           const si = Math.round(sTheta / hubStep);
-           const ei = Math.round(eTheta / hubStep);
-           spokeStartIndices.push(si);
-           spokeEndIndices.push(ei);
-           for (let j = si; j < ei; j++) {
-               spokeSegmentSet.add(((j % radialSegments) + radialSegments) % radialSegments);
-           }
-       }
-
-       // --- A. GENERATE SOLID HUB RING (360 degrees) ---
-       // The outer bottom edge incorporates corner arches — it dips down
-       // near spoke edges, forming self-supporting brackets for FDM printing.
-       const hubOuterBottom: number[] = [];
-       const hubOuterTop: number[] = [];
-       const hubInnerBottom: number[] = [];
-       const hubInnerTop: number[] = [];
-
-       const tanAngle = Math.tan(angleRad);
-
-       for (let j = 0; j <= radialSegments; j++) {
-           const theta = (j / radialSegments) * Math.PI * 2;
-           const hubOuterR = holeRadius + rimW;
-           const archOffset = getArchOffset(theta);
-
-           // Corner arch: extend outer-bottom OUTWARD along cone slope
-           // instead of dropping straight down. This makes the arch tips
-           // follow the spoke direction and merge into the spoke side walls.
-           const archRadialExt = tanAngle > 0.01 ? archOffset / tanAngle : 0;
-           const archR = hubOuterR + archRadialExt;
-           const archY = hubOuterY - archOffset;
-
-           // Inner Vertices (Hole) — unchanged
-           vertices.push(holeRadius * Math.cos(theta), hubInnerY, holeRadius * Math.sin(theta));
-           hubInnerBottom.push(vertexIndex++);
-           vertices.push(holeRadius * Math.cos(theta), hubInnerY + suspThick, holeRadius * Math.sin(theta));
-           hubInnerTop.push(vertexIndex++);
-
-           // Outer Vertices — bottom extends along cone slope, top stays at hubOuterR
-           // This creates a tapered bracket: wider at bottom, meeting hub ring at top
-           vertices.push(archR * Math.cos(theta), archY, archR * Math.sin(theta));
-           hubOuterBottom.push(vertexIndex++);
-           vertices.push(hubOuterR * Math.cos(theta), hubOuterY + suspThick, hubOuterR * Math.sin(theta));
-           hubOuterTop.push(vertexIndex++);
-       }
-
-       // Build Hub Faces — skip outer wall quads where spokes attach
-       for (let j = 0; j < radialSegments; j++) {
-           addQuad(hubOuterBottom[j], hubOuterBottom[j+1], hubInnerBottom[j+1], hubInnerBottom[j], true);
-           addQuad(hubOuterTop[j], hubOuterTop[j+1], hubInnerTop[j+1], hubInnerTop[j]);
-           addQuad(hubInnerBottom[j], hubInnerBottom[j+1], hubInnerTop[j+1], hubInnerTop[j]);
-           // Only build outer wall where spokes DON'T connect
-           if (!spokeSegmentSet.has(j)) {
-               addQuad(hubOuterBottom[j], hubOuterBottom[j+1], hubOuterTop[j+1], hubOuterTop[j], true);
-           }
-       }
-
-       // --- B. GENERATE ARCHED SPOKES (Hub → Wall, self-supporting for FDM) ---
-       // Spokes use radial subdivisions with a power-curve arch so the geometry
-       // is steep (nearly vertical) at the hub and gentle at the wall.
-       // This ensures every layer during FDM printing has minimal overhang.
-       // Spoke angular vertices snap to hub ring grid for perfect vertex fusion.
-
-       // Constants for radial scanning
-       const tanA = Math.tan(angleRad);
-       const dr = 0.05; // 0.5mm step resolution
-       const maxScanR = Math.max(rT, rB) * 1.5; // Max bounds
-
-       // Arch parameters — lower power = more dramatic arch
-       const RADIAL_STEPS = 8; // Subdivisions from hub to wall
-       const ARCH_POWER = Math.max(0.1, Math.min(1.0, params.suspensionArchPower ?? 0.35));
-
-       // Angular sweep for conservative wall sampling
-       const ribHalfWave = params.ribCount > 0 ? Math.PI / Math.max(1, params.ribCount) : 0;
-       const sweepHalf = Math.max(0.15, ribHalfWave, armWidthRad * 0.5);
-       const sweepStep = Math.max(0.03, sweepHalf / 6); // ~6 samples per side
-
-       for (let k = 0; k < arms; k++) {
-           const hubOuterR = holeRadius + rimW; // exact hub ring radius — keeps spoke attached
-
-           // Spoke angular positions snapped to hub ring grid
-           const spokeStartIdx = spokeStartIndices[k];
-           const spokeEndIdx = spokeEndIndices[k];
-           const segmentsPerArm = Math.max(2, spokeEndIdx - spokeStartIdx);
-
-           // --- Phase 1: Scanner — find collisionR per angular segment ---
-           const collisionRs: number[] = [];
-
-           for (let s = 0; s <= segmentsPerArm; s++) {
-               const theta = (spokeStartIdx + s) * hubStep;
-
-               // RADIAL WALL SCANNER (multi-angle conservative)
-               let collisionR = hubOuterR;
-               let foundInnerWall = false;
-
-               for (let r = hubOuterR; r < maxScanR; r += dr) {
-                   const yBot = centerHoleY - (r - holeRadius) * tanA;
-                   // If cone slope exits the body, stop scanning but DON'T
-                   // claim we found the wall — the spoke hasn't reached it yet.
-                   if (yBot < 0 || yBot > h) { break; }
-
-                   let innermost = Infinity;
-                   for (let dTheta = -sweepHalf; dTheta <= sweepHalf; dTheta += sweepStep) {
-                       const p = calculatePointData(yBot, theta + dTheta, params);
-                       innermost = Math.min(innermost, p.r - thickness);
-                   }
-                   const limitBot = Math.max(0.1, innermost);
-
-                   if (r >= limitBot) {
-                       collisionR = r;
-                       foundInnerWall = true;
-                       break;
-                   }
-               }
-
-               // Fallback: if scanner didn't reach the wall (Y exited body or
-               // maxScanR exceeded), compute inner wall directly from profile.
-               // This guarantees the spoke always reaches the wall.
-               if (!foundInnerWall) {
-                   const clampedY = Math.max(0.01, Math.min(h - 0.01, centerHoleY));
-                   let innermost = Infinity;
-                   for (let dTheta = -sweepHalf; dTheta <= sweepHalf; dTheta += sweepStep) {
-                       const p = calculatePointData(clampedY, theta + dTheta, params);
-                       innermost = Math.min(innermost, p.r - thickness);
-                   }
-                   collisionR = Math.max(hubOuterR, innermost);
-               }
-
-               // CONVERGENT HARD CLAMP — always runs, guarantees spoke meets wall
-               let desiredR = collisionR + anchorDepth;
-               for (let iter = 0; iter < 3; iter++) {
-                   const yBotAtTip = centerHoleY - (desiredR - holeRadius) * tanA;
-                   const yTopAtTip = yBotAtTip + suspThick;
-
-                   let strictestLimit = Infinity;
-                   for (let dTheta = -sweepHalf; dTheta <= sweepHalf; dTheta += sweepStep) {
-                       const checkTheta = theta + dTheta;
-                       const pBot = calculatePointData(
-                           Math.max(0.01, Math.min(h - 0.01, yBotAtTip)), checkTheta, params
-                       );
-                       const pTop = calculatePointData(
-                           Math.max(0.01, Math.min(h - 0.01, yTopAtTip)), checkTheta, params
-                       );
-                       const limit = Math.min(pBot.r, pTop.r);
-                       if (limit < strictestLimit) strictestLimit = limit;
-                   }
-
-                   const hardLimitR = strictestLimit - safetyMargin;
-                   if (desiredR > hardLimitR) desiredR = hardLimitR;
-               }
-               collisionRs.push(Math.max(hubOuterR + 0.1, desiredR));
-           }
-
-           // --- Phase 2: Generate 2D vertex grid with arch curve ---
-           // armGrid[s][r] = { bot: vertexIndex, top: vertexIndex }
-           // s = angular segment (0..segmentsPerArm), r = radial step (0..RADIAL_STEPS)
-           // r=0 is hub end, r=RADIAL_STEPS is wall end
-           const armGrid: { bot: number; top: number }[][] = [];
-
-           for (let s = 0; s <= segmentsPerArm; s++) {
-               const theta = (spokeStartIdx + s) * hubStep;
-               const wallR = collisionRs[s];
-
-               // Hub end Y (linear at hub outer edge)
-               const hubDistFromHole = hubOuterR - holeRadius;
-               const hubY = centerHoleY - hubDistFromHole * tanA;
-               // Wall end Y (linear at wall, clamped to body bounds)
-               const wallY = Math.max(0.01, Math.min(h - 0.01,
-                   centerHoleY - (wallR - holeRadius) * tanA
-               ));
-
-               const radialRow: { bot: number; top: number }[] = [];
-
-               for (let r = 0; r <= RADIAL_STEPS; r++) {
-                   const t = r / RADIAL_STEPS; // 0 at hub, 1 at wall
-                   const archT = Math.pow(Math.max(0.001, t), ARCH_POWER); // power curve
-
-                   const rPos = hubOuterR + (wallR - hubOuterR) * t; // linear radial
-                   const yPos = hubY + (wallY - hubY) * archT; // arched Y
-
-                   vertices.push(rPos * Math.cos(theta), yPos, rPos * Math.sin(theta));
-                   const botIdx = vertexIndex++;
-                   vertices.push(rPos * Math.cos(theta), yPos + suspThick, rPos * Math.sin(theta));
-                   const topIdx = vertexIndex++;
-
-                   radialRow.push({ bot: botIdx, top: topIdx });
-               }
-
-               armGrid.push(radialRow);
-           }
-
-           // --- Phase 3: Build faces ---
-           // Bottom and top surfaces (quad strips across angular × radial)
-           for (let s = 0; s < segmentsPerArm; s++) {
-               for (let r = 0; r < RADIAL_STEPS; r++) {
-                   // Bottom face (facing down)
-                   addQuad(
-                       armGrid[s][r].bot, armGrid[s+1][r].bot,
-                       armGrid[s+1][r+1].bot, armGrid[s][r+1].bot,
-                       true
-                   );
-                   // Top face (facing up)
-                   addQuad(
-                       armGrid[s][r].top, armGrid[s+1][r].top,
-                       armGrid[s+1][r+1].top, armGrid[s][r+1].top
-                   );
-               }
-           }
-
-           // Hub edge cap (r=0, inner edge connecting to hub ring)
-           for (let s = 0; s < segmentsPerArm; s++) {
-               addQuad(
-                   armGrid[s][0].bot, armGrid[s+1][0].bot,
-                   armGrid[s+1][0].top, armGrid[s][0].top
-               );
-           }
-
-           // Wall edge cap (r=RADIAL_STEPS, embedded in wall)
-           for (let s = 0; s < segmentsPerArm; s++) {
-               addQuad(
-                   armGrid[s][RADIAL_STEPS].bot, armGrid[s+1][RADIAL_STEPS].bot,
-                   armGrid[s+1][RADIAL_STEPS].top, armGrid[s][RADIAL_STEPS].top,
-                   true
-               );
-           }
-
-           // Side walls (vent caps at s=0 and s=last)
-           for (let r = 0; r < RADIAL_STEPS; r++) {
-               addQuad(
-                   armGrid[0][r].bot, armGrid[0][r+1].bot,
-                   armGrid[0][r+1].top, armGrid[0][r].top
-               );
-               addQuad(
-                   armGrid[segmentsPerArm][r].bot, armGrid[segmentsPerArm][r].top,
-                   armGrid[segmentsPerArm][r+1].top, armGrid[segmentsPerArm][r+1].bot
-               );
-           }
-       }
-
-       // Corner arches are now integrated into the hub ring geometry (section A).
-       // The hub ring's outer-bottom edge dips near spoke edges via getArchOffset().
-    }
+    // 2. Suspension System — DISABLED FOR REDESIGN
+    // TODO: Implement new suspension hub system
+    // See utils/suspensionHub.ts for R&D module
   }
 
   const geometry = new THREE.BufferGeometry();
