@@ -725,6 +725,48 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
 
                     {params.enableSuspension && (
                       <>
+                        {/* Socket Presets */}
+                        <div className="mb-4">
+                          <label className="text-xs font-semibold text-gray-400 uppercase mb-2 block">Socket Preset</label>
+                          <div className="grid grid-cols-3 gap-1">
+                            {([
+                              ['none', 'None', 0, 0],
+                              ['e26', 'E26', 3.3, 1.5],
+                              ['e27', 'E27', 3.4, 1.5],
+                            ] as [string, string, number, number][]).map(([id, label, holeDia, depth]) => {
+                              const isActive = id === 'none'
+                                ? (params.suspensionSocketDepth ?? 0) === 0
+                                : params.suspensionHoleSize === holeDia && (params.suspensionSocketDepth ?? 0) === depth;
+                              return (
+                                <button
+                                  key={id}
+                                  onClick={() => {
+                                    if (id === 'none') {
+                                      setParams(prev => ({ ...prev, suspensionSocketDepth: 0 }));
+                                    } else {
+                                      setParams(prev => ({
+                                        ...prev,
+                                        suspensionHoleSize: holeDia,
+                                        suspensionSocketDepth: depth,
+                                      }));
+                                    }
+                                  }}
+                                  className={`py-1.5 text-[10px] font-bold uppercase rounded border transition-all ${
+                                    isActive
+                                      ? 'bg-gray-700 border-gray-600 text-white'
+                                      : 'bg-gray-900 border-gray-800 text-gray-600 hover:text-gray-400'
+                                  }`}
+                                >
+                                  {label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <p className="text-[10px] text-gray-500 mt-1">
+                            {(params.suspensionSocketDepth ?? 0) > 0 ? 'Socket tube grips bulb base' : 'No socket tube'}
+                          </p>
+                        </div>
+
                         <DualInput
                           label="Wall Attach Height"
                           value={params.suspensionHeight * 100}
@@ -739,6 +781,24 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                           onChange={(v) => update('suspensionHoleSize', v)}
                           unit="cm" displayUnit={displayUnit}
                         />
+                        {(params.suspensionSocketDepth ?? 0) > 0 && (
+                          <>
+                            <DualInput
+                              label="Socket Depth"
+                              value={params.suspensionSocketDepth}
+                              min={0} max={3} step={0.1}
+                              onChange={(v) => update('suspensionSocketDepth', v)}
+                              unit="cm" displayUnit={displayUnit}
+                            />
+                            <DualInput
+                              label="Socket Wall"
+                              value={params.suspensionSocketWall}
+                              min={0.15} max={0.5} step={0.05}
+                              onChange={(v) => update('suspensionSocketWall', v)}
+                              unit="cm" displayUnit={displayUnit}
+                            />
+                          </>
+                        )}
                         <DualInput
                           label="Hub Width"
                           value={params.suspensionRimWidth}

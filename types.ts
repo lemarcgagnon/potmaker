@@ -55,6 +55,8 @@ export interface DesignParams {
   suspensionButtressExtent: number; // How far hub bridges extend outward between spokes (cm)
   suspensionButtressArc: number; // Shape exponent (0.3–3.0). Lower = wider arch, higher = narrower
   spokeHollow: number; // 0-1: How much material to remove from spoke center (0=solid, 1=max cutout)
+  suspensionSocketDepth: number; // Tube depth in cm (0 = no tube)
+  suspensionSocketWall: number;  // Tube wall thickness in cm (min 0.2 for FDM)
 
   // Saucer Configuration
   saucerHeight: number;
@@ -138,6 +140,8 @@ export const DEFAULT_PARAMS: DesignParams = {
   suspensionButtressExtent: 0.3, // Small corner fillets
   suspensionButtressArc: 0.5, // Moderate arch shape
   spokeHollow: 0, // Solid spokes by default
+  suspensionSocketDepth: 0, // No socket tube by default
+  suspensionSocketWall: 0.2, // 2mm wall thickness
 
   // Saucer Defaults
   saucerHeight: 2.0,

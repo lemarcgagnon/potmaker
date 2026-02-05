@@ -60,8 +60,14 @@ const testConfig: SuspensionConfig = {
   hubWidth: 1.0,             // 1cm hub ring width
   hubThickness: 0.4,         // 4mm thick material
   spokeCount: 4,             // 4 spokes
-  spokeWidthDeg: 40,         // 40° wide each
+  spokeWidthMm: 15,          // 15mm spoke width at hub
+  spokeWallWidthMm: 15,      // 15mm spoke width at wall
   spokeAngle: 45,            // 45° slope
+  archDepthFactor: 0.35,     // Arch depth
+  flipped: false,            // Normal orientation
+  spokeHollow: 0,            // Solid spokes
+  socketDepth: 0,            // No socket tube
+  socketWall: 0.2,           // 2mm wall thickness
   wallThickness: 0.3,        // 3mm wall
   shadeHeight: 15,           // 15cm tall shade
 

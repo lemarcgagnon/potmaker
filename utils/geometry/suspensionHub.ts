@@ -49,6 +49,10 @@ export interface SuspensionConfig {
   flipped: boolean;          // If true, spokes go DOWN from hub (for upside-down printing)
   spokeHollow: number;       // 0-1: Elliptical cutout in spoke center (0=solid, 1=max opening)
 
+  // Socket tube
+  socketDepth: number;       // Tube depth in cm (0 = no tube)
+  socketWall: number;        // Tube wall thickness in cm
+
   // Wall interface
   wallRadiusAtY: (y: number, theta: number) => number;  // Get wall inner radius at (y, theta)
   wallThickness: number;     // Wall thickness (for reference)
@@ -87,6 +91,8 @@ export function generateSuspensionHub(
     archDepthFactor,
     flipped,
     spokeHollow,
+    socketDepth,
+    socketWall,
     wallRadiusAtY,
     shadeHeight
   } = config;
@@ -164,10 +170,21 @@ export function generateSuspensionHub(
   const hubSegments = radialSegments;
 
   // Store ring vertices for reuse
-  const hubInnerBot: number[] = [];  // Inner ring, bottom surface
+  const hubInnerBot: number[] = [];  // Inner ring, bottom surface (at holeRadius, hubInnerY)
   const hubInnerTop: number[] = [];  // Inner ring, top surface
   const hubOuterBot: number[] = [];  // Outer ring, bottom surface
   const hubOuterTop: number[] = [];  // Outer ring, top surface
+
+  // Socket tube: compute radii and positions
+  const hasSocket = socketDepth > 0;
+  const tubeOuterR = hasSocket ? Math.min(holeRadius + socketWall, hubOuterR - 0.05) : holeRadius;
+  // Tube extends AWAY from shade body (into the shade interior)
+  const tubeEndY = hasSocket ? hubInnerY + slopeSign * socketDepth : hubInnerY;
+
+  // Socket tube vertex rings (only when tube present)
+  const tubeEndInner: number[] = [];   // Inner ring at tube end (holeRadius, tubeEndY)
+  const tubeEndOuter: number[] = [];   // Outer ring at tube end (tubeOuterR, tubeEndY)
+  const tubeStartOuter: number[] = []; // Outer ring at hub level (tubeOuterR, hubInnerY)
 
   for (let j = 0; j <= hubSegments; j++) {
     const theta = (j / hubSegments) * Math.PI * 2;
@@ -181,18 +198,54 @@ export function generateSuspensionHub(
     // Outer ring (lower Y due to slope)
     hubOuterBot.push(addVertex(hubOuterR * cosT, clampedHubOuterY, hubOuterR * sinT));
     hubOuterTop.push(addVertex(hubOuterR * cosT, clampedHubOuterY + hubThickness, hubOuterR * sinT));
+
+    // Socket tube vertices
+    if (hasSocket) {
+      tubeEndInner.push(addVertex(holeRadius * cosT, tubeEndY, holeRadius * sinT));
+      tubeEndOuter.push(addVertex(tubeOuterR * cosT, tubeEndY, tubeOuterR * sinT));
+      tubeStartOuter.push(addVertex(tubeOuterR * cosT, hubInnerY, tubeOuterR * sinT));
+    }
   }
 
   // Build hub ring faces
   for (let j = 0; j < hubSegments; j++) {
     // Inner cylinder (faces inward toward hole) - faces need to point INTO the hole
+    // When socket tube is present, the inner wall continues down into the tube
     addQuad(hubInnerBot[j], hubInnerBot[j + 1], hubInnerTop[j + 1], hubInnerTop[j]);
 
     // Top conical surface (faces up)
     addQuad(hubInnerTop[j], hubInnerTop[j + 1], hubOuterTop[j + 1], hubOuterTop[j]);
 
     // Bottom conical surface (faces down)
-    addQuad(hubInnerBot[j], hubOuterBot[j], hubOuterBot[j + 1], hubInnerBot[j + 1]);
+    // When tube present: starts from tubeStartOuter (tubeOuterR) instead of hubInnerBot (holeRadius)
+    if (hasSocket) {
+      addQuad(tubeStartOuter[j], hubOuterBot[j], hubOuterBot[j + 1], tubeStartOuter[j + 1]);
+    } else {
+      addQuad(hubInnerBot[j], hubOuterBot[j], hubOuterBot[j + 1], hubInnerBot[j + 1]);
+    }
+  }
+
+  // ============================================
+  // STEP 1b: Socket tube geometry (when socketDepth > 0)
+  // ============================================
+  if (hasSocket) {
+    for (let j = 0; j < hubSegments; j++) {
+      // Tube inner wall: from tubeEndY to hubInnerY at holeRadius, faces inward
+      addQuad(tubeEndInner[j], tubeEndInner[j + 1], hubInnerBot[j + 1], hubInnerBot[j]);
+
+      // Tube outer wall: from tubeEndY to hubInnerY at tubeOuterR, faces outward
+      addQuad(tubeStartOuter[j], tubeStartOuter[j + 1], tubeEndOuter[j + 1], tubeEndOuter[j]);
+
+      // Tube end cap: annular ring at tubeEndY, faces away from shade
+      // Normal direction depends on slopeSign: if slopeSign=-1 (normal), end cap faces down
+      const endCapFlip = slopeSign < 0;
+      addQuad(tubeEndInner[j], tubeEndOuter[j], tubeEndOuter[j + 1], tubeEndInner[j + 1], endCapFlip);
+
+      // Tube start cap: annular ring at hubInnerY from holeRadius to tubeOuterR
+      // Faces same direction as hub bottom (away from shade top)
+      const startCapFlip = slopeSign > 0;
+      addQuad(hubInnerBot[j], tubeStartOuter[j], tubeStartOuter[j + 1], hubInnerBot[j + 1], startCapFlip);
+    }
   }
 
   // ============================================
@@ -498,6 +551,8 @@ export function createConfigFromParams(
     archDepthFactor: params.suspensionArchPower, // 0-1 arch depth
     flipped: params.suspensionFlipped, // Flip spoke direction
     spokeHollow: params.spokeHollow ?? 0, // 0-1 cutout
+    socketDepth: params.suspensionSocketDepth ?? 0,
+    socketWall: Math.max(0.15, params.suspensionSocketWall ?? 0.2),
     wallRadiusAtY: getWallInnerRadius,
     wallThickness: params.thickness,
     shadeHeight: params.height,
