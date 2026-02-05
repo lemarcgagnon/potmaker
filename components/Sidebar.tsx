@@ -845,12 +845,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                           unit="mm"
                         />
                         <DualInput
-                          label="Wall Width"
+                          label="Wall Attach Width"
                           value={params.suspensionWallWidth}
-                          min={5} max={80} step={1}
+                          min={3} max={120} step={1}
                           onChange={(v) => update('suspensionWallWidth', v)}
                           unit="mm"
                         />
+                        {params.suspensionWallWidth > params.suspensionRibWidth * 2 && (
+                          <p className="text-[10px] text-gray-500 mt-1">
+                            Wide tip + spoke cutout creates petal shapes
+                          </p>
+                        )}
                         <DualInput
                           label="Spoke Angle"
                           value={params.suspensionAngle}

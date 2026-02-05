@@ -133,9 +133,10 @@ export function generateSuspensionHub(
   const clampedHubInnerY = Math.max(0.1, Math.min(shadeHeight - 0.1, hubInnerY));
 
   // Spoke angular parameters
-  // Convert mm width to radians at hub outer edge (hubOuterR is in cm, widths in mm)
+  // Convert mm width to radians at the correct radius (cm → mm: multiply by 10)
   const spokeWidthRad = spokeWidthMm / (hubOuterR * 10);
-  const wallWidthRad = spokeWallWidthMm / (hubOuterR * 10);
+  // Wall attach width uses wall radius so the mm value matches physical width at the tip
+  const wallWidthRad = spokeWallWidthMm / (repWallR * 10);
   const spokeStep = (2 * Math.PI) / spokeCount;
 
   // Helper to add vertex and return its index
