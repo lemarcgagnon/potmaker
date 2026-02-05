@@ -91,13 +91,13 @@ const DualInput: React.FC<{
           className="flex-1 h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500 hover:accent-blue-400 transition-colors"
         />
         <input
-          type="number"
+          type="text"
+          inputMode="decimal"
           value={text}
           onChange={handleText}
           onFocus={() => setFocused(true)}
           onBlur={commitText}
           onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-          step={dStep}
           className="w-16 bg-gray-800 border border-gray-700 text-white text-xs font-mono py-1 px-1.5 rounded text-right focus:border-blue-500 focus:outline-none transition-colors"
         />
       </div>
@@ -695,11 +695,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                     </button>
                     <DualInput label="Saucer Height" value={params.saucerHeight} min={1} max={8} onChange={(v) => update('saucerHeight', v)} unit="cm" displayUnit={displayUnit} />
                     <DualInput label="Gap (Tolerance)" value={params.saucerGap} min={0.1} max={1.5} step={0.05} onChange={(v) => update('saucerGap', v)} unit="cm" displayUnit={displayUnit} />
+                    <DualInput label="Wall Thickness" value={params.saucerWallThickness} min={0.2} max={2.0} step={0.05} onChange={(v) => update('saucerWallThickness', v)} unit="cm" displayUnit={displayUnit} />
+                    <DualInput label="Floor Thickness" value={params.saucerBaseThickness} min={0.2} max={2.0} step={0.05} onChange={(v) => update('saucerBaseThickness', v)} unit="cm" displayUnit={displayUnit} />
                     <DualInput
                       label="Flare Angle" value={params.saucerSlope} min={0} max={45} step={1}
                       onChange={(v) => update('saucerSlope', v)} unit="deg"
                       warning={params.saucerSlope > 30 ? `${params.saucerSlope}° exceeds 30° FDM overhang limit` : undefined}
                     />
+                    <DualInput label="Explode Distance" value={params.saucerSeparation} min={0} max={10} step={0.5} onChange={(v) => update('saucerSeparation', v)} unit="cm" displayUnit={displayUnit} />
                  </AccordionSection>
               )}
 
@@ -764,12 +767,28 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                           unit="mm"
                         />
                         <DualInput
-                          label="Slope Angle"
+                          label="Spoke Angle"
                           value={params.suspensionAngle}
-                          min={45} max={70} step={1}
+                          min={45} max={80} step={1}
                           onChange={(v) => update('suspensionAngle', v)}
                           unit="deg"
                         />
+                        {(() => {
+                          // Show where spokes will attach to the wall
+                          const holeR = params.suspensionHoleSize / 2;
+                          const hubOuterR = holeR + params.suspensionRimWidth;
+                          const avgWallR = ((params.radiusTop + params.radiusBottom) / 2) - params.thickness;
+                          const radialTravel = Math.max(0, avgWallR - hubOuterR);
+                          const yDrop = radialTravel / Math.tan(Math.max(45, params.suspensionAngle) * Math.PI / 180);
+                          const hubY = params.height * params.suspensionHeight;
+                          const attachY = params.suspensionFlipped ? hubY + yDrop : hubY - yDrop;
+                          const attachPct = Math.max(0, Math.min(100, (attachY / params.height) * 100));
+                          return (
+                            <p className="text-[10px] text-gray-500 mt-1">
+                              Wall attachment at ~{attachPct.toFixed(0)}% height ({attachY.toFixed(1)}{displayUnit === 'mm' ? '0mm' : 'cm'})
+                            </p>
+                          );
+                        })()}
                         <DualInput
                           label="Arch Depth"
                           value={params.suspensionArchPower * 100}
@@ -780,7 +799,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                         <div className="flex items-center justify-between py-1">
                           <span className="text-xs text-gray-400">Flip Direction</span>
                           <button
-                            onClick={() => update('suspensionFlipped', !params.suspensionFlipped)}
+                            onClick={() => {
+                              // Mirror height so the geometry inverts properly
+                              setParams(prev => ({
+                                ...prev,
+                                suspensionFlipped: !prev.suspensionFlipped,
+                                suspensionHeight: Math.max(0.05, Math.min(0.95, 1 - prev.suspensionHeight)),
+                              }));
+                            }}
                             className={`px-2 py-0.5 text-xs rounded ${
                               params.suspensionFlipped
                                 ? 'bg-blue-500/30 text-blue-300'
@@ -839,15 +865,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                   <DualInput label="Mesh Resolution" value={params.radialSegments} min={32} max={360} step={16} onChange={(v) => update('radialSegments', v)} />
                </div>
                
-               {params.mode === 'pot' && (
-                 <div className="p-4 bg-gray-900 rounded-lg border border-gray-800">
-                     <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
-                        <Layers className="w-4 h-4 text-orange-400" /> Assembly View
-                     </h3>
-                     <DualInput label="Explode Distance" value={params.saucerSeparation} min={0} max={10} step={0.5} onChange={(v) => update('saucerSeparation', v)} unit="cm" displayUnit={displayUnit} />
-                 </div>
-               )}
-
                <div className="p-4 bg-gray-900 rounded-lg border border-gray-800">
                   <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
                      <Camera className="w-4 h-4 text-cyan-400" /> Product Image

@@ -87,18 +87,22 @@ export function generateSuspensionHub(
     shadeHeight
   } = config;
 
-  // Enforce minimum printable angle
+  // Enforce minimum printable angle for spokes
   const effectiveAngle = Math.max(spokeAngle, MIN_SELF_SUPPORTING_ANGLE);
   const slopeRad = effectiveAngle * Math.PI / 180;
   const tanSlope = Math.tan(slopeRad);
+
+  // Hub ring always uses a fixed 45° slope (self-supporting, independent of spoke angle)
+  // This prevents the ring from becoming impractically tall at steep spoke angles
+  const HUB_RING_TAN = Math.tan(MIN_SELF_SUPPORTING_ANGLE * Math.PI / 180); // = 1.0
 
   // Slope direction: normal = spokes go UP (negative Y delta), flipped = spokes go DOWN (positive Y delta)
   const slopeSign = flipped ? 1 : -1;
 
   // Hub geometry
   const hubOuterR = holeRadius + hubWidth;
-  const hubInnerY = centerY;                                      // Hub center at hole edge
-  const hubOuterY = centerY + slopeSign * hubWidth * tanSlope;    // Hub outer edge
+  const hubInnerY = centerY;                                          // Hub center at hole edge
+  const hubOuterY = centerY + slopeSign * hubWidth * HUB_RING_TAN;   // Hub outer edge (fixed 45° slope)
 
   // Ensure hub stays within bounds
   const clampedHubOuterY = flipped
@@ -247,10 +251,9 @@ export function generateSuspensionHub(
       for (let r = 0; r <= SPOKE_RADIAL_STEPS; r++) {
         const radialT = r / SPOKE_RADIAL_STEPS; // 0 at hub, 1 at wall
 
-        // Spoke width at this radial position (wider at hub, narrower at wall)
-        // Use ARC curve for the widening: allows thinner spokes while still closing gap
-        // sin curve: steep near wall (good for FDM), flattens near hub where spokes meet
-        const archT = Math.sin((1 - radialT) * Math.PI / 2); // 0 at wall, 1 at hub
+        // Spoke width at this radial position (thin at wall, widening toward hub ring)
+        // sin curve: narrow at wall attachment, broadening as they reach the hub
+        const archT = Math.sin((1 - radialT) * Math.PI / 2); // 1 at hub, 0 at wall
         const widthAtR = spokeWidthRad + 2 * maxExtraWidth * archT;
 
         // Theta position: interpolate across current width
