@@ -180,9 +180,10 @@ export function generateSuspensionHub(
   const hubOuterBot: number[] = [];  // Outer ring, bottom surface
   const hubOuterTop: number[] = [];  // Outer ring, top surface
 
-  // Socket tube: compute radii and positions
+  // Socket tube: compute radii and positions (enforce 2mm min wall everywhere)
   const hasSocket = socketDepth > 0;
-  const tubeOuterR = hasSocket ? Math.min(holeRadius + socketWall, hubOuterR - 0.05) : holeRadius;
+  const effectiveSocketWall = Math.max(0.2, socketWall); // 2mm min tube wall
+  const tubeOuterR = hasSocket ? Math.min(holeRadius + effectiveSocketWall, hubOuterR - 0.2) : holeRadius;
   // Tube extends AWAY from shade body (into the shade interior)
   const tubeEndY = hasSocket ? hubInnerY + slopeSign * socketDepth : hubInnerY;
 
@@ -192,7 +193,7 @@ export function generateSuspensionHub(
     ? socketChamferDepth * Math.tan(socketChamferAngle * Math.PI / 180)
     : 0;
   const chamferTopR = hasChamfer
-    ? Math.min(holeRadius + chamferWidth, tubeOuterR - 0.05)
+    ? Math.min(holeRadius + chamferWidth, tubeOuterR - 0.2)
     : holeRadius;
   // Chamfer bottom Y: chamfer extends into tube from hubInnerY
   const chamferBotY = hasChamfer
@@ -398,8 +399,15 @@ export function generateSuspensionHub(
     }
 
     // Pre-compute elliptical cutout mask for this spoke
+    // Enforce 2mm minimum solid margin around the cutout
+    const minPhysicalWidth = Math.min(spokeWidthMm, spokeWallWidthMm);
+    const maxHollowForMargin = minPhysicalWidth > 4
+      ? (1 - 4 / minPhysicalWidth) / 0.82   // 2mm on each side
+      : 0;                                     // spoke too narrow for any cutout
+    const effectiveHollow = Math.min(spokeHollow, maxHollowForMargin);
+
     const cutoutMask: boolean[][] = [];
-    if (spokeHollow > 0) {
+    if (effectiveHollow > 0) {
       for (let s = 0; s < spokeAngularSegs; s++) {
         cutoutMask[s] = [];
         for (let r = 0; r < SPOKE_RADIAL_STEPS; r++) {
@@ -408,7 +416,7 @@ export function generateSuspensionHub(
           const v = ((r + 0.5) / SPOKE_RADIAL_STEPS - 0.5) * 2;
 
           // Ellipse size leaves structural margins on all sides
-          const size = spokeHollow * 0.82;
+          const size = effectiveHollow * 0.82;
           if (size <= 0) { cutoutMask[s][r] = false; continue; }
 
           // Slightly elongated radially for a leaf shape
@@ -422,7 +430,7 @@ export function generateSuspensionHub(
     // Build spoke faces (with cutout support)
     for (let s = 0; s < spokeAngularSegs; s++) {
       for (let r = 0; r < SPOKE_RADIAL_STEPS; r++) {
-        const isCut = spokeHollow > 0 && cutoutMask[s]?.[r];
+        const isCut = effectiveHollow > 0 && cutoutMask[s]?.[r];
 
         if (isCut) {
           // Add inner walls at cutout boundary for watertight mesh
@@ -602,7 +610,7 @@ export function createConfigFromParams(
     flipped: params.suspensionFlipped, // Flip spoke direction
     spokeHollow: params.spokeHollow ?? 0, // 0-1 cutout
     socketDepth: params.suspensionSocketDepth ?? 0,
-    socketWall: Math.max(0.15, params.suspensionSocketWall ?? 0.2),
+    socketWall: Math.max(0.2, params.suspensionSocketWall ?? 0.2), // 2mm min for FDM
     socketChamferAngle: params.suspensionSocketChamferAngle ?? 0,
     socketChamferDepth: params.suspensionSocketChamferDepth ?? 0.2,
     wallRadiusAtY: getWallInnerRadius,

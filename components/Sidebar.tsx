@@ -795,7 +795,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                             <DualInput
                               label="Socket Wall"
                               value={params.suspensionSocketWall}
-                              min={0.15} max={1.0} step={0.05}
+                              min={0.2} max={1.0} step={0.05}
                               onChange={(v) => update('suspensionSocketWall', v)}
                               unit="cm" displayUnit={displayUnit}
                             />
