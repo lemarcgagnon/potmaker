@@ -379,6 +379,17 @@ export function generateSuspensionHub(
         // Theta position: interpolate across current width
         const startTheta = spokeCenterTheta - widthAtR / 2;
         const theta = startTheta + angularT * widthAtR;
+
+        if (r === 0) {
+          // Directly reference hub outer ring vertices for watertight mesh.
+          // The old approach created separate vertices and stitched via index-rounding,
+          // which left tiny gaps making the mesh non-manifold.
+          const jRaw = Math.round((theta / (2 * Math.PI)) * hubSegments);
+          const j = ((jRaw % hubSegments) + hubSegments) % hubSegments;
+          radialRow.push({ bot: hubOuterBot[j], top: hubOuterTop[j] });
+          continue;
+        }
+
         const cosT = Math.cos(theta);
         const sinT = Math.sin(theta);
 
@@ -510,26 +521,9 @@ export function generateSuspensionHub(
       );
     }
 
-    // Hub connection: close the gap between hub outer ring and spoke inner edge (at r=0)
-    // The spoke width at hub is spokeWidthAtHub
-    const spokeStartAtHub = spokeCenterTheta - spokeWidthAtHub / 2;
-    for (let s = 0; s < spokeAngularSegs; s++) {
-      const thetaA = spokeStartAtHub + (s / spokeAngularSegs) * spokeWidthAtHub;
-      const thetaB = spokeStartAtHub + ((s + 1) / spokeAngularSegs) * spokeWidthAtHub;
-
-      // Find closest hub vertices - handle negative angles correctly
-      const jARaw = Math.round((thetaA / (2 * Math.PI)) * hubSegments);
-      const jBRaw = Math.round((thetaB / (2 * Math.PI)) * hubSegments);
-      const jA = ((jARaw % hubSegments) + hubSegments) % hubSegments;
-      const jB = ((jBRaw % hubSegments) + hubSegments) % hubSegments;
-
-      // Skip degenerate quads where indices are the same
-      if (jA === jB) continue;
-
-      // Connect hub outer to spoke inner (r=0)
-      addQuad(hubOuterBot[jA], hubOuterBot[jB], spokeGrid[s + 1][0].bot, spokeGrid[s][0].bot);
-      addQuad(hubOuterTop[jA], spokeGrid[s][0].top, spokeGrid[s + 1][0].top, hubOuterTop[jB]);
-    }
+    // Hub connection: spoke r=0 vertices directly reference hubOuterBot/Top,
+    // so the spoke faces seamlessly share edges with the hub ring faces.
+    // No stitching quads needed — topology is watertight by construction.
   }
 
   // ============================================
