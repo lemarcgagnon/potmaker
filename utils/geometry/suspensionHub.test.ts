@@ -68,6 +68,8 @@ const testConfig: SuspensionConfig = {
   spokeHollow: 0,            // Solid spokes
   socketDepth: 0,            // No socket tube
   socketWall: 0.2,           // 2mm wall thickness
+  socketChamferAngle: 0,     // No chamfer
+  socketChamferDepth: 0.2,   // 2mm chamfer depth
   wallThickness: 0.3,        // 3mm wall
   shadeHeight: 15,           // 15cm tall shade
 

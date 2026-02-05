@@ -69,7 +69,7 @@ const DualInput: React.FC<{
     setFocused(false);
     let v = parseFloat(text);
     if (isNaN(v)) { setText(dVal.toFixed(decimals)); return; }
-    v = Math.max(dMin, Math.min(dMax, v));
+    v = Math.max(dMin, v);
     setText(v.toFixed(decimals));
     onChange(v / factor);
   };
@@ -748,6 +748,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                                         ...prev,
                                         suspensionHoleSize: holeDia,
                                         suspensionSocketDepth: depth,
+                                        suspensionSocketChamferAngle: 30,
+                                        suspensionSocketChamferDepth: 0.2,
                                       }));
                                     }
                                   }}
@@ -777,7 +779,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                         <DualInput
                           label="Hole Diameter"
                           value={params.suspensionHoleSize}
-                          min={2.5} max={6} step={0.1}
+                          min={2.5} max={15} step={0.1}
                           onChange={(v) => update('suspensionHoleSize', v)}
                           unit="cm" displayUnit={displayUnit}
                         />
@@ -786,17 +788,33 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                             <DualInput
                               label="Socket Depth"
                               value={params.suspensionSocketDepth}
-                              min={0} max={3} step={0.1}
+                              min={0} max={10} step={0.1}
                               onChange={(v) => update('suspensionSocketDepth', v)}
                               unit="cm" displayUnit={displayUnit}
                             />
                             <DualInput
                               label="Socket Wall"
                               value={params.suspensionSocketWall}
-                              min={0.15} max={0.5} step={0.05}
+                              min={0.15} max={1.0} step={0.05}
                               onChange={(v) => update('suspensionSocketWall', v)}
                               unit="cm" displayUnit={displayUnit}
                             />
+                            <DualInput
+                              label="Socket Chamfer"
+                              value={params.suspensionSocketChamferAngle}
+                              min={0} max={60} step={5}
+                              onChange={(v) => update('suspensionSocketChamferAngle', v)}
+                              unit="deg"
+                            />
+                            {params.suspensionSocketChamferAngle > 0 && (
+                              <DualInput
+                                label="Chamfer Depth"
+                                value={params.suspensionSocketChamferDepth}
+                                min={0} max={2.0} step={0.05}
+                                onChange={(v) => update('suspensionSocketChamferDepth', v)}
+                                unit="cm" displayUnit={displayUnit}
+                              />
+                            )}
                           </>
                         )}
                         <DualInput

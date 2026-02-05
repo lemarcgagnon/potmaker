@@ -6,7 +6,7 @@ A real-time parametric designer for 3D-printable pots, planters, and lamp shades
 
 ### Design Modes
 - **Pot** — Planters with drainage holes, adjustable floors, and matching saucers
-- **Shade** — Lamp shades (suspension hub system in development)
+- **Shade** — Lamp shades with full suspension hub, socket tube, and chamfer system
 
 ### Profile Curves
 - **Standard** — Linear taper with optional bulge
@@ -41,11 +41,25 @@ A real-time parametric designer for 3D-printable pots, planters, and lamp shades
 - Bottom lift with 35° minimum slope enforcement
 - Matching saucer with gap tolerance and flare angle
 
+### Suspension Hub (Shade Mode)
+- **Hub ring** — Conical self-supporting ring around the socket hole
+- **Spokes** — Configurable count, width, angle, and hollow cutout
+- **Arch depth** — Bridging between spokes for structural support
+- **Flip direction** — Print upside-down or right-side-up
+- **Socket tube** — Cylindrical tube extending from hub for bulb socket grip
+  - E26/E27 presets with one-click sizing
+  - Adjustable depth (up to 10 cm), wall thickness, and hole diameter (up to 15 cm)
+  - **Chamfer/bevel** — Angled funnel at tube entry for easy bulb insertion
+    - Configurable angle (0–60°) and depth (up to 2 cm)
+    - Automatically included with E26/E27 presets (30°, 2 mm)
+- **Flexible input** — Text fields accept values beyond slider range for custom sizing
+
 ### Export
 - Binary STL with correct mm scaling (geometry authored in cm, exported at 10×)
 - Y-up to Z-up rotation for slicer compatibility
 - Origin placed on build plate
 - Individual parts or ZIP bundle with timestamps
+- Design recipe save/load (JSON)
 
 ## FDM 3D Printing Compliance
 
@@ -60,6 +74,7 @@ The geometry engine enforces printability constraints:
 | Floor angle (lifted) | ≥35° | Auto-corrected |
 | Pierce mode | ≤35° surface | Auto-suppressed |
 | Wall thickness | ≥2mm | UI minimum 0.2cm |
+| Hub/spoke angle | ≥45° | Enforced minimum |
 
 See `.claude/3dprintrules.md` for complete FDM design guidelines.
 
@@ -103,7 +118,7 @@ utils/
     profileMath.ts        Core math: calculatePointData, profile curves
     bodyGeometry.ts       Main body walls, rim, floor generation
     saucerGeometry.ts     Drip tray generation
-    suspensionHub.ts      [R&D] Lamp shade mounting system
+    suspensionHub.ts      Lamp shade mounting system with socket tube + chamfer
 
 types.ts                  DesignParams interface and defaults
 
@@ -140,11 +155,21 @@ Generates matching saucer that follows pot profile:
 - Wall and base thickness
 - Flare angle
 
-### suspensionHub.ts — [In Development]
-Isolated R&D module for lamp shade mounting system:
+### suspensionHub.ts — Lamp Shade Mounting
+Self-supporting spider-arm hub for lamp shades:
 - Central hole for cord/socket
-- Spoke arms from hub to wall
-- FDM-printable geometry (≥35° angles)
+- Conical hub ring (45° self-supporting slope)
+- Spoke arms from hub to wall with configurable angle and width
+- Spoke hollow cutout (elliptical) for light pass-through
+- Arch bridges between spokes for structural support
+- **Socket tube** — cylindrical extension for bulb grip
+  - Inner wall at hole radius, outer wall with configurable thickness
+  - End cap and start cap for watertight mesh
+- **Socket chamfer** — angled funnel at tube entry
+  - Widens opening by `depth × tan(angle)`, capped to tube outer radius
+  - Four surfaces: chamfer slope, shortened inner wall, modified start cap, hub-to-chamfer bridge
+- Flip mode for inverted printing orientation
+- All geometry ≥45° from horizontal for FDM printability
 
 ## STL Export Pipeline
 
@@ -175,11 +200,6 @@ cd utils/geometry
 npx ts-node suspensionHub.test.ts
 # Opens /tmp/suspension_hub_test.stl for slicer verification
 ```
-
-### Branch Structure
-- `main` — Stable release
-- `with-skin` — Skin pattern feature branch
-- `working-on-suspension-hub` — Suspension hub R&D
 
 ## License
 

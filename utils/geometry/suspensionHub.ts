@@ -52,6 +52,8 @@ export interface SuspensionConfig {
   // Socket tube
   socketDepth: number;       // Tube depth in cm (0 = no tube)
   socketWall: number;        // Tube wall thickness in cm
+  socketChamferAngle: number; // Chamfer angle in degrees (0 = no chamfer)
+  socketChamferDepth: number; // Chamfer depth in cm
 
   // Wall interface
   wallRadiusAtY: (y: number, theta: number) => number;  // Get wall inner radius at (y, theta)
@@ -93,6 +95,8 @@ export function generateSuspensionHub(
     spokeHollow,
     socketDepth,
     socketWall,
+    socketChamferAngle,
+    socketChamferDepth,
     wallRadiusAtY,
     shadeHeight
   } = config;
@@ -181,10 +185,26 @@ export function generateSuspensionHub(
   // Tube extends AWAY from shade body (into the shade interior)
   const tubeEndY = hasSocket ? hubInnerY + slopeSign * socketDepth : hubInnerY;
 
+  // Chamfer: widens tube opening to ease bulb insertion
+  const hasChamfer = hasSocket && socketChamferAngle > 0 && socketChamferDepth > 0;
+  const chamferWidth = hasChamfer
+    ? socketChamferDepth * Math.tan(socketChamferAngle * Math.PI / 180)
+    : 0;
+  const chamferTopR = hasChamfer
+    ? Math.min(holeRadius + chamferWidth, tubeOuterR - 0.05)
+    : holeRadius;
+  // Chamfer bottom Y: chamfer extends into tube from hubInnerY
+  const chamferBotY = hasChamfer
+    ? hubInnerY + slopeSign * Math.min(socketChamferDepth, socketDepth * 0.9)
+    : hubInnerY;
+
   // Socket tube vertex rings (only when tube present)
   const tubeEndInner: number[] = [];   // Inner ring at tube end (holeRadius, tubeEndY)
   const tubeEndOuter: number[] = [];   // Outer ring at tube end (tubeOuterR, tubeEndY)
   const tubeStartOuter: number[] = []; // Outer ring at hub level (tubeOuterR, hubInnerY)
+  // Chamfer vertex rings (only when chamfer active)
+  const chamferTop: number[] = [];     // Widened ring at hub level (chamferTopR, hubInnerY)
+  const chamferBot: number[] = [];     // Ring where chamfer meets inner wall (holeRadius, chamferBotY)
 
   for (let j = 0; j <= hubSegments; j++) {
     const theta = (j / hubSegments) * Math.PI * 2;
@@ -204,6 +224,12 @@ export function generateSuspensionHub(
       tubeEndInner.push(addVertex(holeRadius * cosT, tubeEndY, holeRadius * sinT));
       tubeEndOuter.push(addVertex(tubeOuterR * cosT, tubeEndY, tubeOuterR * sinT));
       tubeStartOuter.push(addVertex(tubeOuterR * cosT, hubInnerY, tubeOuterR * sinT));
+
+      // Chamfer vertices
+      if (hasChamfer) {
+        chamferTop.push(addVertex(chamferTopR * cosT, hubInnerY, chamferTopR * sinT));
+        chamferBot.push(addVertex(holeRadius * cosT, chamferBotY, holeRadius * sinT));
+      }
     }
   }
 
@@ -230,21 +256,44 @@ export function generateSuspensionHub(
   // ============================================
   if (hasSocket) {
     for (let j = 0; j < hubSegments; j++) {
-      // Tube inner wall: from tubeEndY to hubInnerY at holeRadius, faces inward
-      addQuad(tubeEndInner[j], tubeEndInner[j + 1], hubInnerBot[j + 1], hubInnerBot[j]);
+      if (hasChamfer) {
+        // --- WITH CHAMFER ---
+        // Chamfer surface: angled quad from chamferTop (wide, hubInnerY) to chamferBot (narrow, chamferBotY)
+        addQuad(chamferTop[j], chamferTop[j + 1], chamferBot[j + 1], chamferBot[j]);
 
-      // Tube outer wall: from tubeEndY to hubInnerY at tubeOuterR, faces outward
-      addQuad(tubeStartOuter[j], tubeStartOuter[j + 1], tubeEndOuter[j + 1], tubeEndOuter[j]);
+        // Tube inner wall: from chamferBot down to tubeEndInner (holeRadius cylinder)
+        addQuad(chamferBot[j], chamferBot[j + 1], tubeEndInner[j + 1], tubeEndInner[j]);
 
-      // Tube end cap: annular ring at tubeEndY, faces away from shade
-      // Normal direction depends on slopeSign: if slopeSign=-1 (normal), end cap faces down
-      const endCapFlip = slopeSign < 0;
-      addQuad(tubeEndInner[j], tubeEndOuter[j], tubeEndOuter[j + 1], tubeEndInner[j + 1], endCapFlip);
+        // Tube outer wall: from tubeEndY to hubInnerY at tubeOuterR, faces outward
+        addQuad(tubeStartOuter[j], tubeStartOuter[j + 1], tubeEndOuter[j + 1], tubeEndOuter[j]);
 
-      // Tube start cap: annular ring at hubInnerY from holeRadius to tubeOuterR
-      // Faces same direction as hub bottom (away from shade top)
-      const startCapFlip = slopeSign > 0;
-      addQuad(hubInnerBot[j], tubeStartOuter[j], tubeStartOuter[j + 1], hubInnerBot[j + 1], startCapFlip);
+        // Tube end cap: annular ring at tubeEndY
+        const endCapFlip = slopeSign < 0;
+        addQuad(tubeEndInner[j], tubeEndOuter[j], tubeEndOuter[j + 1], tubeEndInner[j + 1], endCapFlip);
+
+        // Start cap: annular ring at hubInnerY from chamferTop (chamferTopR) to tubeStartOuter (tubeOuterR)
+        const startCapFlip = slopeSign > 0;
+        addQuad(chamferTop[j], tubeStartOuter[j], tubeStartOuter[j + 1], chamferTop[j + 1], startCapFlip);
+
+        // Hub-to-chamfer bridge: annular ring from hubInnerBot (holeRadius) to chamferTop (chamferTopR) at hubInnerY
+        // This connects the hub inner cylinder to the widened chamfer opening
+        addQuad(hubInnerBot[j], chamferTop[j], chamferTop[j + 1], hubInnerBot[j + 1], startCapFlip);
+      } else {
+        // --- NO CHAMFER (original behavior) ---
+        // Tube inner wall: from tubeEndY to hubInnerY at holeRadius, faces inward
+        addQuad(tubeEndInner[j], tubeEndInner[j + 1], hubInnerBot[j + 1], hubInnerBot[j]);
+
+        // Tube outer wall: from tubeEndY to hubInnerY at tubeOuterR, faces outward
+        addQuad(tubeStartOuter[j], tubeStartOuter[j + 1], tubeEndOuter[j + 1], tubeEndOuter[j]);
+
+        // Tube end cap: annular ring at tubeEndY, faces away from shade
+        const endCapFlip = slopeSign < 0;
+        addQuad(tubeEndInner[j], tubeEndOuter[j], tubeEndOuter[j + 1], tubeEndInner[j + 1], endCapFlip);
+
+        // Tube start cap: annular ring at hubInnerY from holeRadius to tubeOuterR
+        const startCapFlip = slopeSign > 0;
+        addQuad(hubInnerBot[j], tubeStartOuter[j], tubeStartOuter[j + 1], hubInnerBot[j + 1], startCapFlip);
+      }
     }
   }
 
@@ -553,6 +602,8 @@ export function createConfigFromParams(
     spokeHollow: params.spokeHollow ?? 0, // 0-1 cutout
     socketDepth: params.suspensionSocketDepth ?? 0,
     socketWall: Math.max(0.15, params.suspensionSocketWall ?? 0.2),
+    socketChamferAngle: params.suspensionSocketChamferAngle ?? 0,
+    socketChamferDepth: params.suspensionSocketChamferDepth ?? 0.2,
     wallRadiusAtY: getWallInnerRadius,
     wallThickness: params.thickness,
     shadeHeight: params.height,

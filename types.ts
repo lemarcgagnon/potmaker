@@ -57,6 +57,8 @@ export interface DesignParams {
   spokeHollow: number; // 0-1: How much material to remove from spoke center (0=solid, 1=max cutout)
   suspensionSocketDepth: number; // Tube depth in cm (0 = no tube)
   suspensionSocketWall: number;  // Tube wall thickness in cm (min 0.2 for FDM)
+  suspensionSocketChamferAngle: number; // Chamfer angle in degrees (0 = no chamfer)
+  suspensionSocketChamferDepth: number; // Chamfer depth in cm
 
   // Saucer Configuration
   saucerHeight: number;
@@ -142,6 +144,8 @@ export const DEFAULT_PARAMS: DesignParams = {
   spokeHollow: 0, // Solid spokes by default
   suspensionSocketDepth: 0, // No socket tube by default
   suspensionSocketWall: 0.2, // 2mm wall thickness
+  suspensionSocketChamferAngle: 0, // No chamfer by default
+  suspensionSocketChamferDepth: 0.2, // 2mm chamfer depth
 
   // Saucer Defaults
   saucerHeight: 2.0,
