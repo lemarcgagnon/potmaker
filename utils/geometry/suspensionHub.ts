@@ -31,7 +31,7 @@ import { DesignParams } from '../../types';
 
 export interface SuspensionConfig {
   // Position
-  centerY: number;           // Y position of hub center (at hole inner edge)
+  centerY: number;           // Y position of wall attachment (user controls this via Height slider)
 
   // Hub dimensions
   holeRadius: number;        // Radius of center hole (for cord/socket)
@@ -41,11 +41,13 @@ export interface SuspensionConfig {
   // Spoke dimensions
   spokeCount: number;        // Number of spokes (2-8)
   spokeWidthMm: number;      // Width of each spoke in mm (at hub outer edge)
+  spokeWallWidthMm: number;  // Width of each spoke in mm (at wall attachment)
   spokeAngle: number;        // Slope angle in degrees (from horizontal, ≥45°)
 
   // Arch bridge settings
   archDepthFactor: number;   // 0-1: How deep the arches curve (0=flat, 1=full 45° depth)
   flipped: boolean;          // If true, spokes go DOWN from hub (for upside-down printing)
+  spokeHollow: number;       // 0-1: Elliptical cutout in spoke center (0=solid, 1=max opening)
 
   // Wall interface
   wallRadiusAtY: (y: number, theta: number) => number;  // Get wall inner radius at (y, theta)
@@ -80,9 +82,11 @@ export function generateSuspensionHub(
     hubThickness,
     spokeCount,
     spokeWidthMm,
+    spokeWallWidthMm,
     spokeAngle,
     archDepthFactor,
     flipped,
+    spokeHollow,
     wallRadiusAtY,
     shadeHeight
   } = config;
@@ -93,7 +97,6 @@ export function generateSuspensionHub(
   const tanSlope = Math.tan(slopeRad);
 
   // Hub ring always uses a fixed 45° slope (self-supporting, independent of spoke angle)
-  // This prevents the ring from becoming impractically tall at steep spoke angles
   const HUB_RING_TAN = Math.tan(MIN_SELF_SUPPORTING_ANGLE * Math.PI / 180); // = 1.0
 
   // Slope direction: normal = spokes go UP (negative Y delta), flipped = spokes go DOWN (positive Y delta)
@@ -101,17 +104,28 @@ export function generateSuspensionHub(
 
   // Hub geometry
   const hubOuterR = holeRadius + hubWidth;
-  const hubInnerY = centerY;                                          // Hub center at hole edge
-  const hubOuterY = centerY + slopeSign * hubWidth * HUB_RING_TAN;   // Hub outer edge (fixed 45° slope)
 
-  // Ensure hub stays within bounds
-  const clampedHubOuterY = flipped
-    ? Math.min(shadeHeight - 0.1, hubOuterY)  // Flipped: don't go above ceiling
-    : Math.max(0.1, hubOuterY);                // Normal: don't go below floor
+  // === INVERTED LOGIC: wall attachment height is the input, hub position is computed ===
+  // centerY = where spokes attach to the wall (user controls this)
+  const wallAttachY = Math.max(0.5, Math.min(shadeHeight - 0.5, centerY));
+
+  // Compute hub position from wall attachment + spoke angle
+  // Get representative wall radius at the attachment height
+  const repWallR = wallRadiusAtY(wallAttachY, 0);
+  const radialTravel = Math.max(0, repWallR - hubOuterR);
+  // Hub outer edge: computed from wall attachment and spoke angle
+  // Normal: hub is above wall attachment; Flipped: hub is below
+  const hubOuterY = wallAttachY - slopeSign * radialTravel * tanSlope;
+  const hubInnerY = hubOuterY - slopeSign * hubWidth * HUB_RING_TAN;
+
+  // Clamp to valid range
+  const clampedHubOuterY = Math.max(0.1, Math.min(shadeHeight - 0.1, hubOuterY));
+  const clampedHubInnerY = Math.max(0.1, Math.min(shadeHeight - 0.1, hubInnerY));
 
   // Spoke angular parameters
-  // Convert mm width to radians at hub outer edge (hubOuterR is in cm, spokeWidthMm is in mm)
+  // Convert mm width to radians at hub outer edge (hubOuterR is in cm, widths in mm)
   const spokeWidthRad = spokeWidthMm / (hubOuterR * 10);
+  const wallWidthRad = spokeWallWidthMm / (hubOuterR * 10);
   const spokeStep = (2 * Math.PI) / spokeCount;
 
   // Helper to add vertex and return its index
@@ -220,7 +234,8 @@ export function generateSuspensionHub(
   // At hub: wider (controlled by archDepthFactor)
   // Two adjacent spokes meet at the hub, forming a bridge.
   // ============================================
-  const SPOKE_RADIAL_STEPS = 12;
+  // Boost grid resolution when cutout is active for smooth oval edges
+  const SPOKE_RADIAL_STEPS = spokeHollow > 0 ? 32 : 12;
 
   // Calculate the gap between spokes at the wall
   const gapWidthAtWall = spokeStep - spokeWidthRad;
@@ -236,8 +251,9 @@ export function generateSuspensionHub(
     // - At hub (r=0): spokeWidthRad + 2*maxExtraWidth (wide)
     const spokeWidthAtHub = spokeWidthRad + 2 * maxExtraWidth;
 
-    // Use the wider width for angular segments
-    const spokeAngularSegs = Math.max(4, Math.ceil((spokeWidthAtHub / (2 * Math.PI)) * hubSegments));
+    // Use the wider width for angular segments; boost when cutout needs smooth oval
+    const baseAngSegs = Math.max(4, Math.ceil((spokeWidthAtHub / (2 * Math.PI)) * hubSegments));
+    const spokeAngularSegs = spokeHollow > 0 ? Math.max(16, baseAngSegs * 2) : baseAngSegs;
 
     // Build spoke grid: grid[angular][radial] = { bot, top }
     const spokeGrid: { bot: number; top: number }[][] = [];
@@ -251,10 +267,10 @@ export function generateSuspensionHub(
       for (let r = 0; r <= SPOKE_RADIAL_STEPS; r++) {
         const radialT = r / SPOKE_RADIAL_STEPS; // 0 at hub, 1 at wall
 
-        // Spoke width at this radial position (thin at wall, widening toward hub ring)
-        // sin curve: narrow at wall attachment, broadening as they reach the hub
+        // Spoke width: interpolate between wall width and hub width, plus arch widening
         const archT = Math.sin((1 - radialT) * Math.PI / 2); // 1 at hub, 0 at wall
-        const widthAtR = spokeWidthRad + 2 * maxExtraWidth * archT;
+        const baseWidth = wallWidthRad + (spokeWidthRad - wallWidthRad) * (1 - radialT);
+        const widthAtR = baseWidth + 2 * maxExtraWidth * archT;
 
         // Theta position: interpolate across current width
         const startTheta = spokeCenterTheta - widthAtR / 2;
@@ -262,46 +278,12 @@ export function generateSuspensionHub(
         const cosT = Math.cos(theta);
         const sinT = Math.sin(theta);
 
-        // Find where spoke meets wall at this angle
-        // The spoke MUST always connect to the wall - never float free
-        let wallY = clampedHubOuterY;
-        let wallR = hubOuterR;
+        // Wall attachment at fixed height — direct radius lookup (no scanning needed)
+        const wallR = Math.max(wallRadiusAtY(wallAttachY, theta), hubOuterR + 0.3);
 
-        // Scan outward from hub until we hit wall inner surface
-        for (let scanR = hubOuterR; scanR < hubOuterR * 6; scanR += 0.01) {
-          const scanY = clampedHubOuterY + slopeSign * (scanR - hubOuterR) * tanSlope;
-
-          // Check bounds - clamp to valid range
-          const clampedScanY = Math.max(0.05, Math.min(shadeHeight - 0.05, scanY));
-
-          const innerWallR = wallRadiusAtY(clampedScanY, theta);
-
-          if (scanR >= innerWallR - 0.001) {
-            // Found wall intersection
-            wallR = innerWallR;
-            wallY = clampedScanY;
-            break;
-          }
-
-          // If we've gone out of Y bounds, force connection to wall at boundary
-          if (scanY < 0.05 || scanY > shadeHeight - 0.05) {
-            wallY = clampedScanY;
-            wallR = wallRadiusAtY(clampedScanY, theta);
-            break;
-          }
-        }
-
-        // ALWAYS ensure spoke connects to wall - get wall radius at final Y
-        wallR = wallRadiusAtY(wallY, theta);
-
-        // Ensure minimum spoke length (at least 0.3cm beyond hub)
-        if (wallR < hubOuterR + 0.3) {
-          wallR = hubOuterR + 0.3;
-        }
-
-        // Radius and Y position
+        // Interpolate from hub outer edge to wall attachment
         const rPos = hubOuterR + (wallR - hubOuterR) * radialT;
-        const yPos = clampedHubOuterY + (wallY - clampedHubOuterY) * radialT;
+        const yPos = clampedHubOuterY + (wallAttachY - clampedHubOuterY) * radialT;
 
         const bot = addVertex(rPos * cosT, yPos, rPos * sinT);
         const top = addVertex(rPos * cosT, yPos + hubThickness, rPos * sinT);
@@ -312,9 +294,72 @@ export function generateSuspensionHub(
       spokeGrid.push(radialRow);
     }
 
-    // Build spoke faces
+    // Pre-compute elliptical cutout mask for this spoke
+    const cutoutMask: boolean[][] = [];
+    if (spokeHollow > 0) {
+      for (let s = 0; s < spokeAngularSegs; s++) {
+        cutoutMask[s] = [];
+        for (let r = 0; r < SPOKE_RADIAL_STEPS; r++) {
+          // Cell center in [-1, 1] normalized spoke space
+          const u = ((s + 0.5) / spokeAngularSegs - 0.5) * 2;
+          const v = ((r + 0.5) / SPOKE_RADIAL_STEPS - 0.5) * 2;
+
+          // Ellipse size leaves structural margins on all sides
+          const size = spokeHollow * 0.82;
+          if (size <= 0) { cutoutMask[s][r] = false; continue; }
+
+          // Slightly elongated radially for a leaf shape
+          const ex = u / size;
+          const ey = v / (size * 1.15);
+          cutoutMask[s][r] = (ex * ex + ey * ey) < 1;
+        }
+      }
+    }
+
+    // Build spoke faces (with cutout support)
     for (let s = 0; s < spokeAngularSegs; s++) {
       for (let r = 0; r < SPOKE_RADIAL_STEPS; r++) {
+        const isCut = spokeHollow > 0 && cutoutMask[s]?.[r];
+
+        if (isCut) {
+          // Add inner walls at cutout boundary for watertight mesh
+          const leftSolid = s === 0 || !cutoutMask[s - 1][r];
+          const rightSolid = s === spokeAngularSegs - 1 || !cutoutMask[s + 1]?.[r];
+          const hubSolid = r === 0 || !cutoutMask[s][r - 1];
+          const wallSolid = r === SPOKE_RADIAL_STEPS - 1 || !cutoutMask[s][r + 1];
+
+          // Left inner wall (normal points right, into cutout)
+          if (leftSolid) {
+            addQuad(
+              spokeGrid[s][r].top, spokeGrid[s][r + 1].top,
+              spokeGrid[s][r + 1].bot, spokeGrid[s][r].bot
+            );
+          }
+          // Right inner wall (normal points left, into cutout)
+          if (rightSolid) {
+            addQuad(
+              spokeGrid[s + 1][r].bot, spokeGrid[s + 1][r + 1].bot,
+              spokeGrid[s + 1][r + 1].top, spokeGrid[s + 1][r].top
+            );
+          }
+          // Hub-side inner wall (normal points toward wall, into cutout)
+          if (hubSolid) {
+            addQuad(
+              spokeGrid[s][r].bot, spokeGrid[s + 1][r].bot,
+              spokeGrid[s + 1][r].top, spokeGrid[s][r].top
+            );
+          }
+          // Wall-side inner wall (normal points toward hub, into cutout)
+          if (wallSolid) {
+            addQuad(
+              spokeGrid[s][r + 1].top, spokeGrid[s + 1][r + 1].top,
+              spokeGrid[s + 1][r + 1].bot, spokeGrid[s][r + 1].bot
+            );
+          }
+          continue; // Skip top/bottom faces for cutout cells
+        }
+
+        // Solid cell — build top/bottom faces as normal
         // Bottom face (faces down)
         addQuad(
           spokeGrid[s][r].bot, spokeGrid[s + 1][r].bot,
@@ -447,10 +492,12 @@ export function createConfigFromParams(
     hubWidth: params.suspensionRimWidth,
     hubThickness: Math.max(0.2, params.suspensionThickness), // Min 2mm
     spokeCount: params.suspensionRibCount,
-    spokeWidthMm: params.suspensionRibWidth, // Width in mm
+    spokeWidthMm: params.suspensionRibWidth, // Width at hub in mm
+    spokeWallWidthMm: params.suspensionWallWidth ?? params.suspensionRibWidth, // Width at wall in mm
     spokeAngle: Math.max(MIN_SELF_SUPPORTING_ANGLE, params.suspensionAngle),
     archDepthFactor: params.suspensionArchPower, // 0-1 arch depth
     flipped: params.suspensionFlipped, // Flip spoke direction
+    spokeHollow: params.spokeHollow ?? 0, // 0-1 cutout
     wallRadiusAtY: getWallInnerRadius,
     wallThickness: params.thickness,
     shadeHeight: params.height,

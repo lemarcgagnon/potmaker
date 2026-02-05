@@ -47,12 +47,14 @@ export interface DesignParams {
   suspensionAngle: number; // Angle in degrees (45 = self supporting cone)
   suspensionRibCount: number; // Number of arms (vents)
   suspensionRibWidth: number; // Width of each arm in mm (at hub outer edge)
+  suspensionWallWidth: number; // Width of spoke at wall attachment in mm
   suspensionRimWidth: number; // Width of the solid inner ring (hub)
   suspensionAnchorDepth: number; // How deep (in mm) the arm tries to embed into the wall
   suspensionArchPower: number; // Arch curve power (0.1–1.0). Lower = more dramatic arch
   suspensionFlipped: boolean; // If true, spokes go DOWN from hub (for upside-down printing)
   suspensionButtressExtent: number; // How far hub bridges extend outward between spokes (cm)
   suspensionButtressArc: number; // Shape exponent (0.3–3.0). Lower = wider arch, higher = narrower
+  spokeHollow: number; // 0-1: How much material to remove from spoke center (0=solid, 1=max cutout)
 
   // Saucer Configuration
   saucerHeight: number;
@@ -127,13 +129,15 @@ export const DEFAULT_PARAMS: DesignParams = {
   suspensionThickness: 0.4,
   suspensionAngle: 45, 
   suspensionRibCount: 4, 
-  suspensionRibWidth: 15, // 15mm spoke width
+  suspensionRibWidth: 15, // 15mm spoke width at hub
+  suspensionWallWidth: 15, // 15mm spoke width at wall (same as hub by default)
   suspensionRimWidth: 1.0, // 1cm solid hub
   suspensionAnchorDepth: 0.4, // 4mm embed default
   suspensionArchPower: 0.35, // Pronounced arch by default
   suspensionFlipped: false, // Spokes go UP by default
   suspensionButtressExtent: 0.3, // Small corner fillets
   suspensionButtressArc: 0.5, // Moderate arch shape
+  spokeHollow: 0, // Solid spokes by default
 
   // Saucer Defaults
   saucerHeight: 2.0,

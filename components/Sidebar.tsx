@@ -726,9 +726,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                     {params.enableSuspension && (
                       <>
                         <DualInput
-                          label="Height Position"
+                          label="Wall Attach Height"
                           value={params.suspensionHeight * 100}
-                          min={30} max={95} step={5}
+                          min={10} max={95} step={5}
                           onChange={(v) => update('suspensionHeight', v / 100)}
                           unit="%"
                         />
@@ -767,6 +767,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                           unit="mm"
                         />
                         <DualInput
+                          label="Wall Width"
+                          value={params.suspensionWallWidth}
+                          min={5} max={80} step={1}
+                          onChange={(v) => update('suspensionWallWidth', v)}
+                          unit="mm"
+                        />
+                        <DualInput
                           label="Spoke Angle"
                           value={params.suspensionAngle}
                           min={45} max={80} step={1}
@@ -774,18 +781,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                           unit="deg"
                         />
                         {(() => {
-                          // Show where spokes will attach to the wall
+                          // Show where hub ring ends up (computed from wall attach + spoke angle)
                           const holeR = params.suspensionHoleSize / 2;
                           const hubOuterR = holeR + params.suspensionRimWidth;
                           const avgWallR = ((params.radiusTop + params.radiusBottom) / 2) - params.thickness;
                           const radialTravel = Math.max(0, avgWallR - hubOuterR);
-                          const yDrop = radialTravel / Math.tan(Math.max(45, params.suspensionAngle) * Math.PI / 180);
-                          const hubY = params.height * params.suspensionHeight;
-                          const attachY = params.suspensionFlipped ? hubY + yDrop : hubY - yDrop;
-                          const attachPct = Math.max(0, Math.min(100, (attachY / params.height) * 100));
+                          const tanA = Math.tan(Math.max(45, params.suspensionAngle) * Math.PI / 180);
+                          const wallY = params.height * params.suspensionHeight;
+                          const sSign = params.suspensionFlipped ? 1 : -1;
+                          const hubY = wallY - sSign * radialTravel * tanA;
+                          const hubPct = Math.max(0, Math.min(100, (hubY / params.height) * 100));
                           return (
                             <p className="text-[10px] text-gray-500 mt-1">
-                              Wall attachment at ~{attachPct.toFixed(0)}% height ({attachY.toFixed(1)}{displayUnit === 'mm' ? '0mm' : 'cm'})
+                              Hub ring at ~{hubPct.toFixed(0)}% height ({hubY.toFixed(1)}{displayUnit === 'mm' ? '0mm' : 'cm'})
                             </p>
                           );
                         })()}
@@ -796,6 +804,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                           onChange={(v) => update('suspensionArchPower', v / 100)}
                           unit="%"
                         />
+                        <DualInput
+                          label="Spoke Cutout"
+                          value={params.spokeHollow * 100}
+                          min={0} max={90} step={5}
+                          onChange={(v) => update('spokeHollow', v / 100)}
+                          unit="%"
+                        />
+                        {params.spokeHollow > 0 && (
+                          <p className="text-[10px] text-gray-500 mt-1">
+                            Elliptical opening in spoke center for light pass-through
+                          </p>
+                        )}
                         <div className="flex items-center justify-between py-1">
                           <span className="text-xs text-gray-400">Flip Direction</span>
                           <button
