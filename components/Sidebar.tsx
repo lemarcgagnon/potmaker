@@ -621,9 +621,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                         <DualInput
                           label="Spoke Width"
                           value={params.suspensionRibWidth}
-                          min={15} max={80} step={5}
+                          min={5} max={80} step={1}
                           onChange={(v) => update('suspensionRibWidth', v)}
-                          unit="deg"
+                          unit="mm"
                         />
                         <DualInput
                           label="Slope Angle"
@@ -632,9 +632,42 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                           onChange={(v) => update('suspensionAngle', v)}
                           unit="deg"
                         />
-                        <p className="text-[10px] text-gray-500 mt-2">
-                          All surfaces ≥45° for support-free FDM printing
+                        <DualInput
+                          label="Arch Depth"
+                          value={params.suspensionArchPower * 100}
+                          min={0} max={100} step={5}
+                          onChange={(v) => update('suspensionArchPower', v / 100)}
+                          unit="%"
+                        />
+                        <div className="flex items-center justify-between py-1">
+                          <span className="text-xs text-gray-400">Flip Direction</span>
+                          <button
+                            onClick={() => update('suspensionFlipped', !params.suspensionFlipped)}
+                            className={`px-2 py-0.5 text-xs rounded ${
+                              params.suspensionFlipped
+                                ? 'bg-blue-500/30 text-blue-300'
+                                : 'bg-gray-700 text-gray-400'
+                            }`}
+                          >
+                            {params.suspensionFlipped ? 'Top → Down' : 'Bottom → Up'}
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-gray-500 mt-1">
+                          {params.suspensionFlipped
+                            ? 'Spokes go DOWN from hub (print upside-down)'
+                            : 'Spokes go UP to hub (normal printing)'}
                         </p>
+                        <button
+                          onClick={() => {
+                            // Force recalculation by toggling a tiny change
+                            const current = params.suspensionThickness;
+                            update('suspensionThickness', current + 0.001);
+                            setTimeout(() => update('suspensionThickness', current), 50);
+                          }}
+                          className="mt-2 w-full px-2 py-1 text-xs rounded bg-gray-700 hover:bg-gray-600 text-gray-300"
+                        >
+                          ⟳ Recalculate Hub
+                        </button>
                       </>
                     )}
                  </AccordionSection>
