@@ -26,7 +26,12 @@ export const ManifoldDesigner: React.FC<ManifoldDesignerProps> = ({
 }) => {
   const [params, setParams] = useState<DesignParams>({ ...DEFAULT_PARAMS, ...initialParams });
   const [autoRotate, setAutoRotate] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const exportRef = useRef<THREE.Group>(null);
+
+  const handleRefreshGeometry = () => {
+    setRefreshKey(k => k + 1);
+  };
 
   // Reactivity: Update internal state if the parent provides new initialParams
   useEffect(() => {
@@ -217,12 +222,12 @@ export const ManifoldDesigner: React.FC<ManifoldDesignerProps> = ({
            </button>
         </div>
 
-        <Scene params={{...params}} exportRef={exportRef} autoRotate={autoRotate} />
+        <Scene params={{...params}} exportRef={exportRef} autoRotate={autoRotate} refreshKey={refreshKey} />
       </div>
 
       {/* Sidebar Controls */}
       <div className="order-1 md:order-2 h-[45vh] md:h-full w-full md:w-[360px] shadow-2xl z-20 flex-shrink-0 relative">
-        <Sidebar params={params} setParams={setParams} onExport={handleExport} onScreenshot={handleScreenshot} />
+        <Sidebar params={params} setParams={setParams} onExport={handleExport} onScreenshot={handleScreenshot} onRefresh={handleRefreshGeometry} />
       </div>
     </div>
   );

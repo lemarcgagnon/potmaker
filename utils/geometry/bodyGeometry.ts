@@ -16,6 +16,7 @@ import { mergeVertices } from 'three-stdlib';
 import { DesignParams } from '../../types';
 import { calculatePointData, addQuad } from './profileMath';
 import { generateSuspensionHub, createConfigFromParams } from './suspensionHub';
+import { generateKumikoLattice, isAnalyticalKumikoPattern } from './kumikoLattice';
 
 export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry => {
   const {
@@ -30,6 +31,15 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
     potFloorThickness
   } = params;
 
+  // Check if we should use analytical Kumiko lattice generation
+  const useAnalyticalKumiko =
+    isAnalyticalKumikoPattern(params.skinPattern) &&
+    params.skinMode === 'pierced';
+
+  if (useAnalyticalKumiko) {
+    return generateKumikoBodyGeometry(params);
+  }
+
   const h = height;
 
   // Dynamic height segments
@@ -39,8 +49,17 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
   // Boost resolution for skin patterns
   if (params.skinPattern !== 'none') {
     const scale = Math.max(0.1, params.skinScale);
-    const smooth = Math.max(1, Math.min(20, params.skinSmoothing ?? 2));
-    const segsPerTile = Math.ceil(8 * smooth);
+    const isKumiko = params.skinPattern.startsWith('kumiko-');
+
+    // Kumiko patterns need higher resolution for clean lattice edges
+    // Minimum smoothing: 4 for Kumiko (vs 1 for others)
+    const minSmooth = isKumiko ? 4 : 1;
+    const smooth = Math.max(minSmooth, Math.min(20, params.skinSmoothing ?? 2));
+
+    // Kumiko needs more segments per tile for sharp lattice lines
+    // Base: 8 segs/tile * smooth, Kumiko gets 12 segs/tile * smooth
+    const baseSegsPerTile = isKumiko ? 12 : 8;
+    const segsPerTile = Math.ceil(baseSegsPerTile * smooth);
 
     const tilesAlongHeight = height / scale;
     const patternHeightSegs = Math.ceil(tilesAlongHeight * segsPerTile);
@@ -385,4 +404,299 @@ function generatePotFloor(
       }
     }
   }
+}
+
+// ============================================================================
+// ANALYTICAL KUMIKO BODY GEOMETRY
+// ============================================================================
+
+/**
+ * Generate body geometry using analytical Kumiko lattice.
+ * This creates clean single-edge lattice lines instead of stair-stepped approximations.
+ */
+function generateKumikoBodyGeometry(params: DesignParams): THREE.BufferGeometry {
+  const {
+    height,
+    radialSegments: baseRadialSegments,
+    thickness,
+    mode,
+    potFloorThickness,
+    drainageHoleSize,
+    bottomLift
+  } = params;
+
+  const vertices: number[] = [];
+  const indices: number[] = [];
+  let vertexIndex = 0;
+
+  const radialSegments = Math.max(64, baseRadialSegments);
+
+  // Helper to add a quad
+  const addQ = (a: number, b: number, c: number, d: number, flipped = false) => {
+    addQuad(indices, a, b, c, d, flipped);
+  };
+
+  // --- 1. GENERATE KUMIKO LATTICE FRAME ---
+  const lattice = generateKumikoLattice(
+    params.skinPattern as 'kumiko-kikkou' | 'kumiko-asanoha',
+    params
+  );
+
+  // Add lattice vertices
+  const latticeVertexOffset = vertexIndex;
+  for (let i = 0; i < lattice.vertices.length; i += 3) {
+    vertices.push(lattice.vertices[i], lattice.vertices[i + 1], lattice.vertices[i + 2]);
+    vertexIndex++;
+  }
+
+  // Add lattice indices with offset
+  for (const idx of lattice.indices) {
+    indices.push(idx + latticeVertexOffset);
+  }
+
+  // --- 2. GENERATE TOP RIM (solid band) ---
+  const rimHeight = Math.min(thickness * 2, height * 0.1);
+  const rimTop = height;
+  const rimBottom = height - rimHeight;
+  const rimSegmentsV = 4;
+
+  const gridRimOuter: number[] = [];
+  const gridRimInner: number[] = [];
+
+  // Rim outer surface
+  for (let i = 0; i <= rimSegmentsV; i++) {
+    const t = i / rimSegmentsV;
+    const y = rimBottom + t * rimHeight;
+
+    for (let j = 0; j <= radialSegments; j++) {
+      const theta = (j / radialSegments) * Math.PI * 2;
+      const p = calculatePointData(y, theta, params);
+
+      vertices.push(p.r * Math.cos(theta), y, p.r * Math.sin(theta));
+      gridRimOuter.push(vertexIndex++);
+    }
+  }
+
+  // Rim inner surface
+  const rimDeltaTop = thickness * Math.tan(params.rimAngle * (Math.PI / 180));
+  const innerTopY = height - rimDeltaTop;
+
+  for (let i = 0; i <= rimSegmentsV; i++) {
+    const t = i / rimSegmentsV;
+    const innerY = rimBottom + t * (innerTopY - rimBottom);
+
+    for (let j = 0; j <= radialSegments; j++) {
+      const theta = (j / radialSegments) * Math.PI * 2;
+      const p = calculatePointData(innerY, theta, params);
+      const rInner = Math.max(0.01, p.r - thickness);
+
+      vertices.push(rInner * Math.cos(theta), innerY, rInner * Math.sin(theta));
+      gridRimInner.push(vertexIndex++);
+    }
+  }
+
+  const rimCols = radialSegments + 1;
+
+  // Rim outer faces
+  for (let i = 0; i < rimSegmentsV; i++) {
+    for (let j = 0; j < radialSegments; j++) {
+      const a = gridRimOuter[i * rimCols + j];
+      const b = gridRimOuter[i * rimCols + j + 1];
+      const c = gridRimOuter[(i + 1) * rimCols + j + 1];
+      const d = gridRimOuter[(i + 1) * rimCols + j];
+      addQ(a, b, c, d, true);
+    }
+  }
+
+  // Rim inner faces
+  for (let i = 0; i < rimSegmentsV; i++) {
+    for (let j = 0; j < radialSegments; j++) {
+      const a = gridRimInner[i * rimCols + j];
+      const b = gridRimInner[i * rimCols + j + 1];
+      const c = gridRimInner[(i + 1) * rimCols + j + 1];
+      const d = gridRimInner[(i + 1) * rimCols + j];
+      addQ(a, b, c, d);
+    }
+  }
+
+  // Rim top face (connects outer top to inner top)
+  const rimOuterTopIdx = rimSegmentsV * rimCols;
+  const rimInnerTopIdx = rimSegmentsV * rimCols;
+  for (let j = 0; j < radialSegments; j++) {
+    const a = gridRimOuter[rimOuterTopIdx + j];
+    const b = gridRimOuter[rimOuterTopIdx + j + 1];
+    const c = gridRimInner[rimInnerTopIdx + j + 1];
+    const d = gridRimInner[rimInnerTopIdx + j];
+    addQ(a, b, c, d, true);
+  }
+
+  // --- 3. GENERATE BOTTOM (Floor for pot, rim for shade) ---
+  if (mode === 'pot') {
+    // Generate pot floor
+    const holeRadius = Math.max(0, drainageHoleSize / 2);
+    const liftY = bottomLift;
+
+    const gridFloorOuter: number[] = [];
+    const gridFloorInner: number[] = [];
+
+    // Floor outer edge
+    for (let j = 0; j <= radialSegments; j++) {
+      const theta = (j / radialSegments) * Math.PI * 2;
+      const p = calculatePointData(0, theta, params);
+      vertices.push(p.r * Math.cos(theta), 0, p.r * Math.sin(theta));
+      gridFloorOuter.push(vertexIndex++);
+    }
+
+    // Floor inner edge
+    for (let j = 0; j <= radialSegments; j++) {
+      const theta = (j / radialSegments) * Math.PI * 2;
+      const p = calculatePointData(potFloorThickness, theta, params);
+      const rInner = Math.max(0.01, p.r - thickness);
+      vertices.push(rInner * Math.cos(theta), potFloorThickness, rInner * Math.sin(theta));
+      gridFloorInner.push(vertexIndex++);
+    }
+
+    if (liftY <= 0.01) {
+      // Flat floor
+      if (holeRadius <= 0.05) {
+        // Closed
+        vertices.push(0, 0, 0);
+        const cOuter = vertexIndex++;
+        vertices.push(0, potFloorThickness, 0);
+        const cInner = vertexIndex++;
+
+        for (let j = 0; j < radialSegments; j++) {
+          indices.push(cOuter, gridFloorOuter[j], gridFloorOuter[j + 1]);
+        }
+        for (let j = 0; j < radialSegments; j++) {
+          indices.push(cInner, gridFloorInner[j + 1], gridFloorInner[j]);
+        }
+      } else {
+        // With drain hole
+        const gridHoleO: number[] = [];
+        const gridHoleI: number[] = [];
+
+        for (let j = 0; j <= radialSegments; j++) {
+          const theta = (j / radialSegments) * Math.PI * 2;
+          vertices.push(holeRadius * Math.cos(theta), 0, holeRadius * Math.sin(theta));
+          gridHoleO.push(vertexIndex++);
+          vertices.push(holeRadius * Math.cos(theta), potFloorThickness, holeRadius * Math.sin(theta));
+          gridHoleI.push(vertexIndex++);
+        }
+
+        for (let j = 0; j < radialSegments; j++) {
+          addQ(gridFloorOuter[j], gridFloorOuter[j + 1], gridHoleO[j + 1], gridHoleO[j]);
+        }
+        for (let j = 0; j < radialSegments; j++) {
+          addQ(gridFloorInner[j], gridFloorInner[j + 1], gridHoleI[j + 1], gridHoleI[j], true);
+        }
+        for (let j = 0; j < radialSegments; j++) {
+          addQ(gridHoleO[j], gridHoleO[j + 1], gridHoleI[j + 1], gridHoleI[j]);
+        }
+      }
+    } else {
+      // Lifted floor with cone
+      const MIN_FLOOR_ANGLE = 35 * (Math.PI / 180);
+      const tanA = Math.tan(MIN_FLOOR_ANGLE);
+      const rConeBase = holeRadius + liftY / tanA;
+
+      const gridTransO: number[] = [];
+      for (let j = 0; j <= radialSegments; j++) {
+        const theta = (j / radialSegments) * Math.PI * 2;
+        const pO = calculatePointData(0, theta, params);
+        const rT = Math.min(pO.r, rConeBase);
+        vertices.push(rT * Math.cos(theta), 0, rT * Math.sin(theta));
+        gridTransO.push(vertexIndex++);
+      }
+
+      // Flat ring
+      for (let j = 0; j < radialSegments; j++) {
+        addQ(gridFloorOuter[j], gridFloorOuter[j + 1], gridTransO[j + 1], gridTransO[j]);
+      }
+
+      if (holeRadius <= 0.05) {
+        // Cone to center
+        vertices.push(0, liftY, 0);
+        const cOuter = vertexIndex++;
+        for (let j = 0; j < radialSegments; j++) {
+          indices.push(cOuter, gridTransO[j], gridTransO[j + 1]);
+        }
+        vertices.push(0, potFloorThickness + liftY, 0);
+        const cInner = vertexIndex++;
+        for (let j = 0; j < radialSegments; j++) {
+          indices.push(cInner, gridFloorInner[j + 1], gridFloorInner[j]);
+        }
+      } else {
+        // Cone with hole
+        const gridHoleO: number[] = [];
+        const gridHoleI: number[] = [];
+        for (let j = 0; j <= radialSegments; j++) {
+          const theta = (j / radialSegments) * Math.PI * 2;
+          vertices.push(holeRadius * Math.cos(theta), liftY, holeRadius * Math.sin(theta));
+          gridHoleO.push(vertexIndex++);
+          vertices.push(holeRadius * Math.cos(theta), potFloorThickness + liftY, holeRadius * Math.sin(theta));
+          gridHoleI.push(vertexIndex++);
+        }
+        for (let j = 0; j < radialSegments; j++) {
+          addQ(gridTransO[j], gridTransO[j + 1], gridHoleO[j + 1], gridHoleO[j]);
+        }
+        for (let j = 0; j < radialSegments; j++) {
+          addQ(gridFloorInner[j], gridFloorInner[j + 1], gridHoleI[j + 1], gridHoleI[j], true);
+        }
+        for (let j = 0; j < radialSegments; j++) {
+          addQ(gridHoleO[j], gridHoleO[j + 1], gridHoleI[j + 1], gridHoleI[j]);
+        }
+      }
+    }
+  } else {
+    // Shade mode: bottom rim
+    const gridBotOuter: number[] = [];
+    const gridBotInner: number[] = [];
+
+    for (let j = 0; j <= radialSegments; j++) {
+      const theta = (j / radialSegments) * Math.PI * 2;
+      const p = calculatePointData(0, theta, params);
+      vertices.push(p.r * Math.cos(theta), 0, p.r * Math.sin(theta));
+      gridBotOuter.push(vertexIndex++);
+
+      const rInner = Math.max(0.01, p.r - thickness);
+      vertices.push(rInner * Math.cos(theta), 0, rInner * Math.sin(theta));
+      gridBotInner.push(vertexIndex++);
+    }
+
+    // Bottom rim face
+    for (let j = 0; j < radialSegments; j++) {
+      addQ(gridBotOuter[j], gridBotOuter[j + 1], gridBotInner[j + 1], gridBotInner[j]);
+    }
+
+    // Suspension hub for shade
+    if (params.enableSuspension) {
+      const getWallInnerRadius = (y: number, theta: number): number => {
+        const p = calculatePointData(y, theta, params);
+        return Math.max(0.01, p.r - thickness);
+      };
+
+      const hubConfig = createConfigFromParams(params, getWallInnerRadius);
+      const hubResult = generateSuspensionHub(hubConfig, radialSegments);
+
+      const hubVertexOffset = vertexIndex;
+      for (let i = 0; i < hubResult.vertices.length; i += 3) {
+        vertices.push(hubResult.vertices[i], hubResult.vertices[i + 1], hubResult.vertices[i + 2]);
+        vertexIndex++;
+      }
+      for (const idx of hubResult.indices) {
+        indices.push(idx + hubVertexOffset);
+      }
+    }
+  }
+
+  // Build geometry
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+  geometry.setIndex(indices);
+
+  const merged = mergeVertices(geometry, 1e-4);
+  merged.computeVertexNormals();
+
+  return merged;
 }

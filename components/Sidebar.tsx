@@ -1,12 +1,12 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { DesignParams, DEFAULT_PARAMS, ShapeProfile, SkinPatternType, SkinPatternMode } from '../types';
 import {
-  Download, Box, Layers, Palette, Cylinder, Package, Spline, Camera,
-  Waves, Tornado, Wand2, Eye, EyeOff, RotateCcw,
+  Download, Upload, Box, Layers, Palette, Cylinder, Package, Spline, Camera,
+  Waves, Tornado, Wand2, Eye, EyeOff, RotateCcw, RefreshCw,
   ChevronsUp, ChevronsDown, Sliders, ChevronDown, ChevronRight, Lightbulb,
-  Hexagon
+  Hexagon, FileJson
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -14,6 +14,7 @@ interface SidebarProps {
   setParams: React.Dispatch<React.SetStateAction<DesignParams>>;
   onExport: (type: 'body' | 'saucer' | 'all') => void;
   onScreenshot?: () => void;
+  onRefresh?: () => void;
 }
 
 // --- UNIT SYSTEM ---
@@ -134,7 +135,7 @@ const AccordionSection: React.FC<{
 
 type Tab = 'form' | 'details' | 'finish';
 
-export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, onScreenshot }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, onScreenshot, onRefresh }) => {
   const [activeTab, setActiveTab] = useState<Tab>('form');
   const [displayUnit, setDisplayUnit] = useState<DisplayUnit>('cm');
 
@@ -188,6 +189,54 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
 
   const applyProfile = (p: ShapeProfile) => {
     setParams(prev => ({ ...prev, ...profilePresets[p] }));
+  };
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleDownloadRecipe = () => {
+    const recipe = {
+      _format: 'manifold-pro-recipe',
+      _version: 1,
+      params: { ...params }
+    };
+    const json = JSON.stringify(recipe, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const name = params.mode === 'pot' ? 'pot' : 'shade';
+    const ts = new Date().toISOString().slice(0, 10);
+    link.download = `manifold_${name}_${ts}.json`;
+    link.href = url;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleUploadRecipe = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target?.result as string);
+
+        // Validate format
+        if (data._format !== 'manifold-pro-recipe' || !data.params) {
+          alert('Invalid recipe file. Expected a Manifold PRO recipe (.json).');
+          return;
+        }
+
+        // Merge with defaults to handle missing keys from older versions
+        const loaded = { ...DEFAULT_PARAMS, ...data.params } as DesignParams;
+        setParams(loaded);
+      } catch {
+        alert('Could not read file. Make sure it is a valid JSON recipe.');
+      }
+    };
+    reader.readAsText(file);
+
+    // Reset input so the same file can be re-uploaded
+    e.target.value = '';
   };
 
   const handleAutoFitSaucer = () => {
@@ -445,27 +494,76 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                      <div className="grid grid-cols-4 gap-1">
                         {([
                           ['none', 'Off'],
+                          ['kumiko', 'Kumiko'],
                           ['diamond', 'Diam'],
-                          ['hexgrid', 'Hex'],
-                          ['asanoha', 'Asan'],
                           ['seigaiha', 'Seig'],
                           ['shippo', 'Ship'],
                           ['yagasuri', 'Yaga'],
-                        ] as [SkinPatternType, string][]).map(([id, label]) => (
-                            <button
-                                key={id}
-                                onClick={() => update('skinPattern', id)}
-                                className={`py-1.5 text-[10px] font-bold uppercase rounded border transition-all ${
-                                    params.skinPattern === id
-                                        ? 'bg-emerald-600/20 border-emerald-500 text-emerald-100'
-                                        : 'bg-gray-900 border-gray-800 text-gray-600 hover:text-gray-400'
-                                }`}
-                            >
-                                {label}
-                            </button>
-                        ))}
+                        ] as [string, string][]).map(([id, label]) => {
+                            const isKumikoSelected = params.skinPattern.startsWith('kumiko-');
+                            const isActive = id === 'kumiko'
+                              ? isKumikoSelected
+                              : params.skinPattern === id;
+                            return (
+                              <button
+                                  key={id}
+                                  onClick={() => {
+                                    if (id === 'kumiko') {
+                                      // Default to asanoha when selecting kumiko
+                                      update('skinPattern', 'kumiko-asanoha');
+                                      update('skinMode', 'pierced');
+                                      // Kumiko needs higher smoothing for clean lattice edges
+                                      if (params.skinSmoothing < 4) {
+                                        update('skinSmoothing', 4);
+                                      }
+                                    } else {
+                                      update('skinPattern', id as SkinPatternType);
+                                    }
+                                  }}
+                                  className={`py-1.5 text-[10px] font-bold uppercase rounded border transition-all ${
+                                      isActive
+                                          ? 'bg-emerald-600/20 border-emerald-500 text-emerald-100'
+                                          : 'bg-gray-900 border-gray-800 text-gray-600 hover:text-gray-400'
+                                  }`}
+                              >
+                                  {label}
+                              </button>
+                            );
+                        })}
                      </div>
                   </div>
+
+                  {/* Kumiko Sub-patterns */}
+                  {params.skinPattern.startsWith('kumiko-') && (
+                    <div className="mb-4 pl-2 border-l-2 border-emerald-500/30">
+                       <label className="text-[10px] font-semibold text-gray-500 uppercase mb-2 block">Kumiko Style</label>
+                       <div className="grid grid-cols-2 gap-1">
+                          {([
+                            ['kumiko-asanoha', 'Asanoha', 'Hemp Leaf'],
+                            ['kumiko-kikkou', 'Kikkou', 'Tortoise Shell'],
+                          ] as [SkinPatternType, string, string][]).map(([id, label, desc]) => (
+                              <button
+                                  key={id}
+                                  onClick={() => update('skinPattern', id)}
+                                  className={`py-2 px-2 text-left rounded border transition-all ${
+                                      params.skinPattern === id
+                                          ? 'bg-emerald-600/20 border-emerald-500 text-emerald-100'
+                                          : 'bg-gray-900 border-gray-800 text-gray-600 hover:text-gray-400'
+                                  }`}
+                              >
+                                  <span className="text-[10px] font-bold uppercase block">{label}</span>
+                                  <span className="text-[9px] text-gray-500">{desc}</span>
+                              </button>
+                          ))}
+                       </div>
+                       <button
+                         onClick={onRefresh}
+                         className="w-full mt-2 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-[10px] font-bold rounded border border-gray-700 flex items-center justify-center gap-1.5 transition-all"
+                       >
+                         <RefreshCw className="w-3 h-3" /> Rebuild Shape
+                       </button>
+                    </div>
+                  )}
 
                   {params.skinPattern !== 'none' && (
                     <>
@@ -507,15 +605,43 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                       </div>
 
                       <DualInput label="Tile Size" value={params.skinScale} min={0.5} max={6.0} step={0.1} onChange={(v) => update('skinScale', v)} unit="cm" displayUnit={displayUnit} />
+                      {(() => {
+                        // FDM constraint: Kumiko voids need min 2mm holes
+                        const isKumiko = params.skinPattern.startsWith('kumiko-');
+                        if (!isKumiko) return null;
+                        const voidFraction = 1 - params.skinLineWidth;
+                        const minScale = voidFraction > 0.1 ? 0.2 / voidFraction : 0.5;
+                        return params.skinScale < minScale ? (
+                          <p className="text-[10px] text-amber-400 mt-1">
+                            Scale auto-boosted to {(minScale * 10).toFixed(0)}mm for printable 2mm holes
+                          </p>
+                        ) : null;
+                      })()}
                       <DualInput label="Depth" value={params.skinDepth} min={0.05} max={0.5} step={0.01} onChange={(v) => update('skinDepth', v)} unit="cm" displayUnit={displayUnit} />
+                      {(() => {
+                        // FDM constraint: min emboss 0.5mm, min carve 0.4mm
+                        const minDepth = params.skinMode === 'embossed' ? 0.05 : params.skinMode === 'carved' ? 0.04 : 0;
+                        return params.skinDepth < minDepth && params.skinMode !== 'pierced' ? (
+                          <p className="text-[10px] text-amber-400 mt-1">
+                            Depth auto-boosted to {(minDepth * 10).toFixed(1)}mm for FDM visibility
+                          </p>
+                        ) : null;
+                      })()}
                       <DualInput label="Line Width" value={params.skinLineWidth * 100} min={10} max={60} step={1} onChange={(v) => update('skinLineWidth', v / 100)} unit="%" />
-                      {params.skinLineWidth < 0.2 && (
-                        <p className="text-[10px] text-amber-400 mt-1">
-                          Thin lines below 0.8mm may not print reliably on FDM
-                        </p>
-                      )}
+                      {(() => {
+                        // FDM constraint: Kumiko needs 0.8mm walls, others need 0.6mm
+                        const isKumiko = params.skinPattern.startsWith('kumiko-');
+                        const minThickness = isKumiko ? 0.08 : 0.06;
+                        const physicalLW = params.skinScale * params.skinLineWidth;
+                        const minLWPercent = (minThickness / params.skinScale) * 100;
+                        return physicalLW < minThickness ? (
+                          <p className="text-[10px] text-amber-400 mt-1">
+                            Line width auto-boosted to {minLWPercent.toFixed(0)}% ({(minThickness * 10).toFixed(1)}mm min{isKumiko ? ' for Kumiko' : ''})
+                          </p>
+                        ) : null;
+                      })()}
                       <DualInput label="Rotation" value={params.skinRotation} min={0} max={90} step={1} onChange={(v) => update('skinRotation', v)} unit="deg" />
-                      <DualInput label="Connection Width" value={params.skinConnectionWidth} min={0.04} max={0.5} step={0.01} onChange={(v) => update('skinConnectionWidth', v)} unit="cm" displayUnit={displayUnit} />
+                      <DualInput label="Connection Width" value={params.skinConnectionWidth} min={0.08} max={0.5} step={0.01} onChange={(v) => update('skinConnectionWidth', v)} unit="cm" displayUnit={displayUnit} />
                       {(() => {
                         const physicalLW = params.skinScale * params.skinLineWidth;
                         const connW = params.skinConnectionWidth;
@@ -526,7 +652,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                         ) : null;
                       })()}
 
-                      <DualInput label="Smoothing" value={params.skinSmoothing} min={1} max={20} step={0.5} onChange={(v) => update('skinSmoothing', v)} />
+                      <DualInput
+                        label="Smoothing"
+                        value={params.skinSmoothing}
+                        min={params.skinPattern.startsWith('kumiko-') ? 4 : 1}
+                        max={20}
+                        step={0.5}
+                        onChange={(v) => update('skinSmoothing', v)}
+                      />
+                      {params.skinPattern.startsWith('kumiko-') && params.skinSmoothing < 4 && (
+                        <p className="text-[10px] text-emerald-400 mt-1">
+                          Kumiko minimum smoothing: 4 (for clean lattice edges)
+                        </p>
+                      )}
                       {params.skinSmoothing >= 6 && (
                         <p className="text-[10px] text-amber-400 mt-1">
                           High smoothing — may be slow on complex designs
@@ -722,6 +860,36 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onExport, o
                      Save Image (PNG)
                   </button>
                   <p className="text-[10px] text-gray-500 mt-2">Captures the current 3D view as displayed</p>
+               </div>
+
+               <div className="p-4 bg-gray-900 rounded-lg border border-gray-800">
+                  <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                     <FileJson className="w-4 h-4 text-amber-400" /> Design Recipe
+                  </h3>
+                  <div className="flex gap-2">
+                     <button
+                        onClick={handleDownloadRecipe}
+                        className="flex-1 py-2.5 bg-gray-800 hover:bg-gray-700 text-white text-sm font-semibold rounded-lg border border-gray-700 flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
+                     >
+                        <Download className="w-4 h-4" />
+                        Save
+                     </button>
+                     <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="flex-1 py-2.5 bg-gray-800 hover:bg-gray-700 text-white text-sm font-semibold rounded-lg border border-gray-700 flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
+                     >
+                        <Upload className="w-4 h-4" />
+                        Load
+                     </button>
+                  </div>
+                  <input
+                     ref={fileInputRef}
+                     type="file"
+                     accept=".json"
+                     onChange={handleUploadRecipe}
+                     className="hidden"
+                  />
+                  <p className="text-[10px] text-gray-500 mt-2">Save or load all design parameters as a JSON recipe</p>
                </div>
             </div>
         )}

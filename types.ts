@@ -1,6 +1,13 @@
 export type DesignMode = 'pot' | 'shade';
 export type ShapeProfile = 'standard' | 'elliptic' | 'bell' | 'tulip' | 'cone' | 'barrel' | 'hourglass' | 'trumpet' | 'ogee' | 'vase' | 'polygon';
-export type SkinPatternType = 'none' | 'asanoha' | 'seigaiha' | 'shippo' | 'yagasuri' | 'hexgrid' | 'diamond';
+export type SkinPatternType =
+  | 'none'
+  | 'kumiko-asanoha'   // Hemp leaf
+  | 'kumiko-kikkou'    // Tortoise shell hexagons
+  | 'diamond'
+  | 'seigaiha'
+  | 'shippo'
+  | 'yagasuri';
 export type SkinPatternMode = 'embossed' | 'carved' | 'pierced';
 
 export interface DesignParams {
@@ -156,7 +163,7 @@ export const DEFAULT_PARAMS: DesignParams = {
   skinDepth: 0.1,
   skinLineWidth: 0.3,
   skinRotation: 0,
-  skinConnectionWidth: 0.08,
+  skinConnectionWidth: 0.08,    // 0.8mm minimum for FDM (2 perimeters)
   skinInvert: false,
   skinSmoothing: 2,
 

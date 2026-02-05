@@ -230,11 +230,21 @@ type PatternFn = (u: number, v: number, lw: number) => number;
 
 const PATTERN_MAP: Record<string, PatternFn> = {
   diamond: patternDiamond,
-  hexgrid: patternHexgrid,
-  asanoha: patternAsanoha,
+  'kumiko-kikkou': patternHexgrid,
+  'kumiko-asanoha': patternAsanoha,
   seigaiha: patternSeigaiha,
   shippo: patternShippo,
   yagasuri: patternYagasuri,
+};
+
+// --- FDM 3D Printing Constraints (from .claude/3dprintrules.md) ---
+
+const FDM_CONSTRAINTS = {
+  MIN_WALL_THICKNESS_CM: 0.08,    // 0.8mm minimum for 2 perimeters
+  MIN_FINE_DETAIL_CM: 0.06,       // 0.6mm minimum for fine raised/engraved detail
+  MIN_HOLE_DIAMETER_CM: 0.2,      // 2mm minimum vertical hole diameter
+  MIN_EMBOSS_HEIGHT_CM: 0.05,     // 0.5mm minimum emboss height
+  MIN_ENGRAVE_DEPTH_CM: 0.04,     // 0.4mm minimum engrave depth (2 layers)
 };
 
 // --- Entry Point ---
@@ -244,23 +254,96 @@ export interface SkinResult {
   pierce: number; // 0–1 void amount for pierce mode
 }
 
+/**
+ * Check if this is a Kumiko pattern (stricter FDM rules apply)
+ */
+const isKumikoPattern = (pattern: string): boolean => pattern.startsWith('kumiko-');
+
+/**
+ * Compute FDM-safe line width for a given scale.
+ * Ensures physical line width meets minimum wall thickness.
+ */
+const computeSafeLineWidth = (
+  requestedLineWidth: number,
+  scale: number,
+  isKumiko: boolean
+): number => {
+  // Physical line width = scale * lineWidthFraction
+  // We need: scale * lineWidth >= MIN_WALL_THICKNESS
+  // So: lineWidth >= MIN_WALL_THICKNESS / scale
+
+  const minThickness = isKumiko
+    ? FDM_CONSTRAINTS.MIN_WALL_THICKNESS_CM  // 0.8mm for Kumiko (structural)
+    : FDM_CONSTRAINTS.MIN_FINE_DETAIL_CM;    // 0.6mm for other patterns
+
+  const minLineWidthFraction = minThickness / scale;
+
+  // Clamp between 0.1 and 0.6, enforcing the FDM minimum
+  return Math.max(minLineWidthFraction, Math.min(0.6, Math.max(0.1, requestedLineWidth)));
+};
+
+/**
+ * Compute FDM-safe scale for Kumiko patterns.
+ * Ensures void openings meet minimum hole diameter.
+ */
+const computeSafeScale = (requestedScale: number, lineWidth: number, isKumiko: boolean): number => {
+  if (!isKumiko) return Math.max(0.1, requestedScale);
+
+  // For Kumiko pierced patterns, void diameter ≈ scale * (1 - lineWidth)
+  // We need: scale * (1 - lineWidth) >= MIN_HOLE_DIAMETER
+  // So: scale >= MIN_HOLE_DIAMETER / (1 - lineWidth)
+
+  const voidFraction = 1 - lineWidth;
+  if (voidFraction <= 0.1) return Math.max(0.1, requestedScale); // Line width too high, no meaningful voids
+
+  const minScaleForHoles = FDM_CONSTRAINTS.MIN_HOLE_DIAMETER_CM / voidFraction;
+
+  return Math.max(minScaleForHoles, Math.max(0.1, requestedScale));
+};
+
+/**
+ * Compute FDM-safe depth for emboss/carve modes.
+ */
+const computeSafeDepth = (requestedDepth: number, mode: string): number => {
+  const depth = Math.max(0, requestedDepth);
+
+  switch (mode) {
+    case 'embossed':
+      // Min emboss height: 0.5mm
+      return Math.max(FDM_CONSTRAINTS.MIN_EMBOSS_HEIGHT_CM, depth);
+    case 'carved':
+      // Min engrave depth: 0.4mm
+      return Math.max(FDM_CONSTRAINTS.MIN_ENGRAVE_DEPTH_CM, depth);
+    default:
+      return depth;
+  }
+};
+
 export const evaluateSkinPattern = (
   y: number,
   thetaTwisted: number,
   baseRadius: number,
   params: DesignParams
 ): SkinResult => {
-  const { skinPattern, skinMode, skinScale, skinDepth, skinLineWidth, skinRotation } = params;
+  const { skinPattern, skinMode, skinDepth, skinLineWidth, skinRotation } = params;
 
   if (skinPattern === 'none') return { delta: 0, pierce: 0 };
 
   const patternFn = PATTERN_MAP[skinPattern];
   if (!patternFn) return { delta: 0, pierce: 0 };
 
+  const isKumiko = isKumikoPattern(skinPattern);
+
+  // --- FDM-Safe Scale Calculation ---
+  // Start with requested scale, then adjust for FDM constraints
+  let scale = Math.max(0.1, params.skinScale);
+
+  // For Kumiko patterns, ensure scale is large enough for printable voids
+  scale = computeSafeScale(scale, skinLineWidth, isKumiko);
+
   // Map to tile-normalized UV space
   // Use a FIXED reference radius so tiles don't shift between height rows.
   // Round to integer tile count so the pattern wraps seamlessly at θ=0/2π.
-  const scale = Math.max(0.1, skinScale);
   const refRadius = Math.max(0.1, (params.radiusTop + params.radiusBottom) / 2);
   const refCircumference = 2 * Math.PI * refRadius;
   const tilesAround = Math.max(1, Math.round(refCircumference / scale));
@@ -279,19 +362,27 @@ export const evaluateSkinPattern = (
     v = rv;
   }
 
-  // Enforce minimum connection width
-  const minLW = (params.skinConnectionWidth ?? 0.08) / scale;
-  const lineWidth = Math.max(0.1, Math.min(0.6, Math.max(skinLineWidth, minLW)));
+  // --- FDM-Safe Line Width ---
+  // Enforce minimum connection width from params
+  const minLWFromParams = (params.skinConnectionWidth ?? 0.08) / scale;
+
+  // Compute FDM-safe line width (stricter for Kumiko)
+  const safeLineWidth = computeSafeLineWidth(skinLineWidth, scale, isKumiko);
+
+  // Take the maximum of user connection width and FDM-safe width
+  const lineWidth = Math.max(safeLineWidth, minLWFromParams);
+
   let voidAmount = patternFn(u, v, lineWidth);
   if (params.skinInvert) voidAmount = 1 - voidAmount;
+
+  // --- FDM-Safe Depth ---
+  const depth = computeSafeDepth(skinDepth, skinMode);
 
   // Apply mode
   // Convention: voidAmount=1 at shape interiors, 0 on grid lines.
   // Embossed: grid lines protrude (solid lattice raised above surface)
   // Carved: grid lines are grooved into the surface
   // Pierced: shape interiors are cut through, grid lines remain
-  const depth = Math.max(0, skinDepth);
-
   switch (skinMode) {
     case 'embossed':
       return { delta: depth * (1 - voidAmount), pierce: 0 };

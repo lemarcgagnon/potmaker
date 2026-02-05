@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment, ContactShadows } from '@react-three/drei';
@@ -27,6 +27,7 @@ interface SceneProps {
   params: DesignParams;
   exportRef: React.RefObject<THREE.Group | null>;
   autoRotate?: boolean;
+  refreshKey?: number;
 }
 
 const Model: React.FC<{ params: DesignParams }> = ({ params }) => {
@@ -37,6 +38,10 @@ const Model: React.FC<{ params: DesignParams }> = ({ params }) => {
   // If pot, lift it by thickness + gap + separation distance
   const potY = isPot ? (params.thickness + 0.05 + (params.saucerSeparation || 0)) : 0;
 
+  // Refs for geometry disposal
+  const bodyMeshRef = useRef<THREE.Mesh>(null);
+  const saucerMeshRef = useRef<THREE.Mesh>(null);
+
   // Generate Body Geometry
   const bodyGeometry = useMemo(() => generateBodyGeometry(params), [params]);
 
@@ -45,6 +50,19 @@ const Model: React.FC<{ params: DesignParams }> = ({ params }) => {
     if (!isPot) return null;
     return generateSaucerGeometry(params);
   }, [params, isPot]);
+
+  // Dispose old geometry when new geometry is created
+  useEffect(() => {
+    return () => {
+      bodyGeometry?.dispose();
+    };
+  }, [bodyGeometry]);
+
+  useEffect(() => {
+    return () => {
+      saucerGeometry?.dispose();
+    };
+  }, [saucerGeometry]);
 
   // Material Logic:
   const renderMaterial = () => {
@@ -79,6 +97,8 @@ const Model: React.FC<{ params: DesignParams }> = ({ params }) => {
   return (
     <>
       <mesh
+        key={`body-${params.skinPattern}-${params.skinMode}`}
+        ref={bodyMeshRef}
         name="BodyMesh"
         geometry={bodyGeometry}
         position={[0, potY, 0]}
@@ -105,7 +125,7 @@ const Model: React.FC<{ params: DesignParams }> = ({ params }) => {
   );
 };
 
-export const Scene: React.FC<SceneProps> = ({ params, exportRef, autoRotate = false }) => {
+export const Scene: React.FC<SceneProps> = ({ params, exportRef, autoRotate = false, refreshKey = 0 }) => {
   return (
     <Canvas
       shadows
@@ -137,7 +157,7 @@ export const Scene: React.FC<SceneProps> = ({ params, exportRef, autoRotate = fa
       />
 
       <group ref={exportRef}>
-        <Model params={params} />
+        <Model key={refreshKey} params={params} />
       </group>
 
       <OrbitControls
