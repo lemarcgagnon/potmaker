@@ -6,23 +6,15 @@
  *
  * GEOMETRY STRUCTURE:
  * 1. Hub ring: Conical surface from hole edge (high) to outer edge (low)
- *    - Slopes downward at 45° minimum for self-support
- *    - Constant thickness (parallel top/bottom surfaces)
- *
  * 2. Spokes: Thick trapezoidal slabs from hub outer edge to wall
- *    - Each spoke has: top face, bottom face, left wall, right wall, tip cap
- *    - Slopes from hub down to wall at ≥45°
- *
  * 3. Vent gaps: Simply no geometry between spokes
- *    - Hub outer edge has vertical closing wall in gap regions
- *
  * 4. Wall connection: Spoke tips positioned AT wall inner radius
- *    - mergeVertices() will fuse with main body mesh
  *
- * FDM COMPLIANCE (per .claude/3dprintrules.md):
- * - All overhangs ≤45° from vertical (surfaces ≥45° from horizontal)
- * - Minimum thickness: 2mm (0.2cm)
- * - Watertight manifold mesh
+ * WINDING CONVENTION (right-hand rule for addQuad(a,b,c,d) → tris (a,b,c) + (a,c,d)):
+ * - Top faces (+Y normal): CCW viewed from +Y
+ * - Bottom faces (-Y normal): CCW viewed from -Y (CW from +Y)
+ * - Inner wall (inward normal): CCW viewed from center
+ * - Outer wall (outward normal): CCW viewed from outside
  */
 
 import * as THREE from 'three';
@@ -30,581 +22,396 @@ import { mergeVertices } from 'three-stdlib';
 import { DesignParams } from '../../types';
 
 export interface SuspensionConfig {
-  // Position
-  centerY: number;           // Y position of wall attachment (user controls this via Height slider)
-
-  // Hub dimensions
-  holeRadius: number;        // Radius of center hole (for cord/socket)
-  hubWidth: number;          // Radial width of hub ring
-  hubThickness: number;      // Vertical thickness of hub material
-
-  // Spoke dimensions
-  spokeCount: number;        // Number of spokes (2-8)
-  spokeWidthMm: number;      // Width of each spoke in mm (at hub outer edge)
-  spokeWallWidthMm: number;  // Width of each spoke in mm (at wall attachment)
-  spokeAngle: number;        // Slope angle in degrees (from horizontal, ≥45°)
-
-  // Arch bridge settings
-  archDepthFactor: number;   // 0-1: How deep the arches curve (0=flat, 1=full 45° depth)
-  flipped: boolean;          // If true, spokes go DOWN from hub (for upside-down printing)
-  spokeHollow: number;       // 0-1: Elliptical cutout in spoke center (0=solid, 1=max opening)
-
-  // Socket tube
-  socketDepth: number;       // Tube depth in cm (0 = no tube)
-  socketWall: number;        // Tube wall thickness in cm
-  socketChamferAngle: number; // Chamfer angle in degrees (0 = no chamfer)
-  socketChamferDepth: number; // Chamfer depth in cm
-
-  // Wall interface
-  wallRadiusAtY: (y: number, theta: number) => number;  // Get wall inner radius at (y, theta)
-  wallThickness: number;     // Wall thickness (for reference)
-  shadeHeight: number;       // Total shade height (for bounds checking)
+  centerY: number;
+  holeRadius: number;
+  hubWidth: number;
+  hubThickness: number;
+  spokeCount: number;
+  spokeWidthMm: number;
+  spokeWallWidthMm: number;
+  spokeAngle: number;
+  archDepthFactor: number;
+  flipped: boolean;
+  spokeHollow: number;
+  socketDepth: number;
+  socketWall: number;
+  socketChamferAngle: number;
+  socketChamferDepth: number;
+  wallRadiusAtY: (y: number, theta: number) => number;
+  wallThickness: number;
+  shadeHeight: number;
 }
 
 export interface SuspensionResult {
   vertices: number[];
   indices: number[];
+  colors: number[];
 }
 
-// FDM printability constant
-const MIN_SELF_SUPPORTING_ANGLE = 45; // degrees from horizontal
+const MIN_SELF_SUPPORTING_ANGLE = 45;
 
-/**
- * Generate the complete suspension hub geometry.
- * Returns vertices and indices for a watertight mesh.
- */
 export function generateSuspensionHub(
   config: SuspensionConfig,
   radialSegments: number = 64
 ): SuspensionResult {
   const vertices: number[] = [];
   const indices: number[] = [];
+  const colors: number[] = [];
   let vertexIndex = 0;
+  let vColor = [0.6, 0.6, 0.6];
 
   const {
-    centerY,
-    holeRadius,
-    hubWidth,
-    hubThickness,
-    spokeCount,
-    spokeWidthMm,
-    spokeWallWidthMm,
-    spokeAngle,
-    archDepthFactor,
-    flipped,
-    spokeHollow,
-    socketDepth,
-    socketWall,
-    socketChamferAngle,
-    socketChamferDepth,
-    wallRadiusAtY,
-    shadeHeight
+    centerY, holeRadius, hubWidth, hubThickness, spokeCount,
+    spokeWidthMm, spokeWallWidthMm, spokeAngle, archDepthFactor,
+    flipped, spokeHollow, socketDepth, socketWall,
+    socketChamferAngle, socketChamferDepth, wallRadiusAtY, shadeHeight
   } = config;
 
-  // Enforce minimum printable angle for spokes
-  const effectiveAngle = Math.max(spokeAngle, MIN_SELF_SUPPORTING_ANGLE);
-  const slopeRad = effectiveAngle * Math.PI / 180;
+  const slopeRad = Math.max(spokeAngle, MIN_SELF_SUPPORTING_ANGLE) * Math.PI / 180;
   const tanSlope = Math.tan(slopeRad);
-
-  // Hub ring always uses a fixed 45° slope (self-supporting, independent of spoke angle)
-  const HUB_RING_TAN = Math.tan(MIN_SELF_SUPPORTING_ANGLE * Math.PI / 180); // = 1.0
-
-  // Slope direction: normal = spokes go UP (negative Y delta), flipped = spokes go DOWN (positive Y delta)
+  const HUB_RING_TAN = 1.0;
   const slopeSign = flipped ? 1 : -1;
-
-  // Hub geometry
   const hubOuterR = holeRadius + hubWidth;
-
-  // === INVERTED LOGIC: wall attachment height is the input, hub position is computed ===
-  // centerY = where spokes attach to the wall (user controls this)
   const wallAttachY = Math.max(0.5, Math.min(shadeHeight - 0.5, centerY));
-
-  // Compute hub position from wall attachment + spoke angle
-  // Get representative wall radius at the attachment height
   const repWallR = wallRadiusAtY(wallAttachY, 0);
   const radialTravel = Math.max(0, repWallR - hubOuterR);
-  // Hub outer edge: computed from wall attachment and spoke angle
-  // Normal: hub is above wall attachment; Flipped: hub is below
   const hubOuterY = wallAttachY - slopeSign * radialTravel * tanSlope;
   const hubInnerY = hubOuterY - slopeSign * hubWidth * HUB_RING_TAN;
-
-  // Clamp to valid range
   const clampedHubOuterY = Math.max(0.1, Math.min(shadeHeight - 0.1, hubOuterY));
-  const clampedHubInnerY = Math.max(0.1, Math.min(shadeHeight - 0.1, hubInnerY));
 
-  // Spoke angular parameters
-  // Convert mm width to radians at the correct radius (cm → mm: multiply by 10)
   const spokeWidthRad = spokeWidthMm / (hubOuterR * 10);
-  // Wall attach width uses wall radius so the mm value matches physical width at the tip
   const wallWidthRad = spokeWallWidthMm / (repWallR * 10);
   const spokeStep = (2 * Math.PI) / spokeCount;
 
-  // Helper to add vertex and return its index
   const addVertex = (x: number, y: number, z: number): number => {
     vertices.push(x, y, z);
+    colors.push(vColor[0], vColor[1], vColor[2]);
     return vertexIndex++;
   };
 
-  // Helper to add a quad (two triangles) with correct winding
-  const addQuad = (a: number, b: number, c: number, d: number, flip = false) => {
-    if (flip) {
-      indices.push(a, c, b, a, d, c);
-    } else {
-      indices.push(a, b, c, a, c, d);
-    }
+  const addQuad = (a: number, b: number, c: number, d: number) => {
+    indices.push(a, b, c, a, c, d);
   };
 
-  // Helper to add a triangle
-  const addTri = (a: number, b: number, c: number, flip = false) => {
-    if (flip) {
-      indices.push(a, c, b);
-    } else {
-      indices.push(a, b, c);
-    }
+  const addTri = (a: number, b: number, c: number) => {
+    indices.push(a, b, c);
   };
-
-  // ============================================
-  // STEP 1: Build hub ring (conical, with thickness)
-  // ============================================
-  // Hub ring has 4 surfaces:
-  // - Inner cylinder (around hole)
-  // - Outer edge (vertical wall in gaps, transitions to spokes)
-  // - Top conical surface
-  // - Bottom conical surface
 
   const hubSegments = radialSegments;
+  const rimWidth = Math.min(0.2, (hubOuterR - holeRadius) / 4);
+  const rimInnerR = holeRadius + rimWidth;
+  const rimOuterR_hub = hubOuterR - rimWidth;
 
-  // Store ring vertices for reuse
-  const hubInnerBot: number[] = [];  // Inner ring, bottom surface (at holeRadius, hubInnerY)
-  const hubInnerTop: number[] = [];  // Inner ring, top surface
-  const hubOuterBot: number[] = [];  // Outer ring, bottom surface
-  const hubOuterTop: number[] = [];  // Outer ring, top surface
+  const hubInnerBot: number[] = [];
+  const hubInnerTop: number[] = [];
+  const rimInnerBot: number[] = [];
+  const rimInnerTop: number[] = [];
+  const rimOuterBot: number[] = [];
+  const rimOuterTop: number[] = [];
+  const hubOuterBot: number[] = [];
+  const hubOuterTop: number[] = [];
 
-  // Socket tube: compute radii and positions (enforce 2mm min wall everywhere)
-  const hasSocket = socketDepth > 0;
-  const effectiveSocketWall = Math.max(0.2, socketWall); // 2mm min tube wall
-  const tubeOuterR = hasSocket ? Math.min(holeRadius + effectiveSocketWall, hubOuterR - 0.2) : holeRadius;
-  // Tube extends AWAY from shade body (into the shade interior)
-  const tubeEndY = hasSocket ? hubInnerY + slopeSign * socketDepth : hubInnerY;
-
-  // Chamfer: widens tube opening to ease bulb insertion
-  const hasChamfer = hasSocket && socketChamferAngle > 0 && socketChamferDepth > 0;
-  const chamferWidth = hasChamfer
-    ? socketChamferDepth * Math.tan(socketChamferAngle * Math.PI / 180)
-    : 0;
-  const chamferTopR = hasChamfer
-    ? Math.min(holeRadius + chamferWidth, tubeOuterR - 0.2)
-    : holeRadius;
-  // Chamfer bottom Y: chamfer extends into tube from hubInnerY
-  const chamferBotY = hasChamfer
-    ? hubInnerY + slopeSign * Math.min(socketChamferDepth, socketDepth * 0.9)
-    : hubInnerY;
-
-  // Socket tube vertex rings (only when tube present)
-  const tubeEndInner: number[] = [];   // Inner ring at tube end (holeRadius, tubeEndY)
-  const tubeEndOuter: number[] = [];   // Outer ring at tube end (tubeOuterR, tubeEndY)
-  const tubeStartOuter: number[] = []; // Outer ring at hub level (tubeOuterR, hubInnerY)
-  // Chamfer vertex rings (only when chamfer active)
-  const chamferTop: number[] = [];     // Widened ring at hub level (chamferTopR, hubInnerY)
-  const chamferBot: number[] = [];     // Ring where chamfer meets inner wall (holeRadius, chamferBotY)
-
-  for (let j = 0; j <= hubSegments; j++) {
+  for (let j = 0; j < hubSegments; j++) {
     const theta = (j / hubSegments) * Math.PI * 2;
-    const cosT = Math.cos(theta);
-    const sinT = Math.sin(theta);
-
-    // Inner ring (at hole edge, higher Y)
+    const cosT = Math.cos(theta), sinT = Math.sin(theta);
     hubInnerBot.push(addVertex(holeRadius * cosT, hubInnerY, holeRadius * sinT));
     hubInnerTop.push(addVertex(holeRadius * cosT, hubInnerY + hubThickness, holeRadius * sinT));
-
-    // Outer ring (lower Y due to slope)
+    rimInnerBot.push(addVertex(rimInnerR * cosT, hubInnerY, rimInnerR * sinT));
+    rimInnerTop.push(addVertex(rimInnerR * cosT, hubInnerY + hubThickness, rimInnerR * sinT));
+    rimOuterBot.push(addVertex(rimOuterR_hub * cosT, clampedHubOuterY, rimOuterR_hub * sinT));
+    rimOuterTop.push(addVertex(rimOuterR_hub * cosT, clampedHubOuterY + hubThickness, rimOuterR_hub * sinT));
     hubOuterBot.push(addVertex(hubOuterR * cosT, clampedHubOuterY, hubOuterR * sinT));
     hubOuterTop.push(addVertex(hubOuterR * cosT, clampedHubOuterY + hubThickness, hubOuterR * sinT));
-
-    // Socket tube vertices
-    if (hasSocket) {
-      tubeEndInner.push(addVertex(holeRadius * cosT, tubeEndY, holeRadius * sinT));
-      tubeEndOuter.push(addVertex(tubeOuterR * cosT, tubeEndY, tubeOuterR * sinT));
-      tubeStartOuter.push(addVertex(tubeOuterR * cosT, hubInnerY, tubeOuterR * sinT));
-
-      // Chamfer vertices
-      if (hasChamfer) {
-        chamferTop.push(addVertex(chamferTopR * cosT, hubInnerY, chamferTopR * sinT));
-        chamferBot.push(addVertex(holeRadius * cosT, chamferBotY, holeRadius * sinT));
-      }
-    }
   }
 
-  // Build hub ring faces
-  for (let j = 0; j < hubSegments; j++) {
-    // Inner cylinder (faces inward toward hole) - faces need to point INTO the hole
-    // When socket tube is present, the inner wall continues down into the tube
-    addQuad(hubInnerBot[j], hubInnerBot[j + 1], hubInnerTop[j + 1], hubInnerTop[j]);
-
-    // Top conical surface (faces up)
-    addQuad(hubInnerTop[j], hubInnerTop[j + 1], hubOuterTop[j + 1], hubOuterTop[j]);
-
-    // Bottom conical surface (faces down)
-    // When tube present: starts from tubeStartOuter (tubeOuterR) instead of hubInnerBot (holeRadius)
-    if (hasSocket) {
-      addQuad(tubeStartOuter[j], hubOuterBot[j], hubOuterBot[j + 1], tubeStartOuter[j + 1]);
-    } else {
-      addQuad(hubInnerBot[j], hubOuterBot[j], hubOuterBot[j + 1], hubInnerBot[j + 1]);
-    }
-  }
-
-  // ============================================
-  // STEP 1b: Socket tube geometry (when socketDepth > 0)
-  // ============================================
-  if (hasSocket) {
-    for (let j = 0; j < hubSegments; j++) {
-      if (hasChamfer) {
-        // --- WITH CHAMFER ---
-        // Chamfer surface: angled quad from chamferTop (wide, hubInnerY) to chamferBot (narrow, chamferBotY)
-        addQuad(chamferTop[j], chamferTop[j + 1], chamferBot[j + 1], chamferBot[j]);
-
-        // Tube inner wall: from chamferBot down to tubeEndInner (holeRadius cylinder)
-        addQuad(chamferBot[j], chamferBot[j + 1], tubeEndInner[j + 1], tubeEndInner[j]);
-
-        // Tube outer wall: from tubeEndY to hubInnerY at tubeOuterR, faces outward
-        addQuad(tubeStartOuter[j], tubeStartOuter[j + 1], tubeEndOuter[j + 1], tubeEndOuter[j]);
-
-        // Tube end cap: annular ring at tubeEndY
-        const endCapFlip = slopeSign < 0;
-        addQuad(tubeEndInner[j], tubeEndOuter[j], tubeEndOuter[j + 1], tubeEndInner[j + 1], endCapFlip);
-
-        // Start cap: annular ring at hubInnerY from chamferTop (chamferTopR) to tubeStartOuter (tubeOuterR)
-        const startCapFlip = slopeSign > 0;
-        addQuad(chamferTop[j], tubeStartOuter[j], tubeStartOuter[j + 1], chamferTop[j + 1], startCapFlip);
-
-        // Hub-to-chamfer bridge: annular ring from hubInnerBot (holeRadius) to chamferTop (chamferTopR) at hubInnerY
-        // This connects the hub inner cylinder to the widened chamfer opening
-        addQuad(hubInnerBot[j], chamferTop[j], chamferTop[j + 1], hubInnerBot[j + 1], startCapFlip);
-      } else {
-        // --- NO CHAMFER (original behavior) ---
-        // Tube inner wall: from tubeEndY to hubInnerY at holeRadius, faces inward
-        addQuad(tubeEndInner[j], tubeEndInner[j + 1], hubInnerBot[j + 1], hubInnerBot[j]);
-
-        // Tube outer wall: from tubeEndY to hubInnerY at tubeOuterR, faces outward
-        addQuad(tubeStartOuter[j], tubeStartOuter[j + 1], tubeEndOuter[j + 1], tubeEndOuter[j]);
-
-        // Tube end cap: annular ring at tubeEndY, faces away from shade
-        const endCapFlip = slopeSign < 0;
-        addQuad(tubeEndInner[j], tubeEndOuter[j], tubeEndOuter[j + 1], tubeEndInner[j + 1], endCapFlip);
-
-        // Tube start cap: annular ring at hubInnerY from holeRadius to tubeOuterR
-        const startCapFlip = slopeSign > 0;
-        addQuad(hubInnerBot[j], tubeStartOuter[j], tubeStartOuter[j + 1], hubInnerBot[j + 1], startCapFlip);
-      }
-    }
-  }
-
-  // ============================================
-  // STEP 2: Identify spoke and gap regions
-  // ============================================
-  type Region = { startTheta: number; endTheta: number; isSpoke: boolean; centerTheta?: number };
-  const regions: Region[] = [];
-
-  for (let k = 0; k < spokeCount; k++) {
-    const spokeCenterTheta = k * spokeStep;
-
-    // Gap before this spoke (from previous spoke end to this spoke start)
-    const prevSpokeEnd = ((k - 1 + spokeCount) % spokeCount) * spokeStep + spokeWidthRad / 2;
-    const thisSpokeStart = spokeCenterTheta - spokeWidthRad / 2;
-
-    // Normalize angles
-    let gapStart = prevSpokeEnd;
-    let gapEnd = thisSpokeStart;
-    if (k === 0) {
-      gapStart = (spokeCount - 1) * spokeStep + spokeWidthRad / 2 - 2 * Math.PI;
-    }
-    if (gapEnd > gapStart + 0.01) {
-      regions.push({ startTheta: gapStart, endTheta: gapEnd, isSpoke: false });
-    }
-
-    // This spoke
-    regions.push({
-      startTheta: thisSpokeStart,
-      endTheta: spokeCenterTheta + spokeWidthRad / 2,
-      isSpoke: true,
-      centerTheta: spokeCenterTheta
-    });
-  }
-
-  // ============================================
-  // STEP 3: Build spokes (from hub outer edge to wall)
-  // Spokes WIDEN as they approach the hub ring.
-  // At wall: narrow (spokeWidthRad)
-  // At hub: wider (controlled by archDepthFactor)
-  // Two adjacent spokes meet at the hub, forming a bridge.
-  // ============================================
-  // Boost grid resolution when cutout is active for smooth oval edges
+  // --- Compute spoke regions BEFORE ring faces so we can skip outer wall in spoke zones ---
+  const inSpokeRegion = new Uint8Array(hubSegments);
   const SPOKE_RADIAL_STEPS = spokeHollow > 0 ? 32 : 12;
-
-  // Calculate the gap between spokes at the wall
   const gapWidthAtWall = spokeStep - spokeWidthRad;
-
-  // Maximum extra width each spoke can add (half the gap, so two spokes fill it)
   const maxExtraWidth = (gapWidthAtWall / 2) * archDepthFactor;
 
+  // Pre-compute spoke grids and mark spoke regions
+  const spokeGrids: { bot: number; top: number }[][][] = [];
+  const spokeCutoutMasks: boolean[][][] = [];
+  const spokeAngularSegsList: number[] = [];
+
   for (let k = 0; k < spokeCount; k++) {
     const spokeCenterTheta = k * spokeStep;
-
-    // Spoke width varies with radius:
-    // - At wall (r=1): spokeWidthRad (narrow)
-    // - At hub (r=0): spokeWidthRad + 2*maxExtraWidth (wide)
     const spokeWidthAtHub = spokeWidthRad + 2 * maxExtraWidth;
-
-    // Use the wider width for angular segments; boost when cutout needs smooth oval
     const baseAngSegs = Math.max(4, Math.ceil((spokeWidthAtHub / (2 * Math.PI)) * hubSegments));
     const spokeAngularSegs = spokeHollow > 0 ? Math.max(16, baseAngSegs * 2) : baseAngSegs;
-
-    // Build spoke grid: grid[angular][radial] = { bot, top }
+    spokeAngularSegsList.push(spokeAngularSegs);
     const spokeGrid: { bot: number; top: number }[][] = [];
+    const indicesUsed = new Set<number>();
 
     for (let s = 0; s <= spokeAngularSegs; s++) {
-      const angularT = s / spokeAngularSegs; // 0 to 1 across spoke width
-
-      // Build radial vertices for this angular position
+      const angularT = s / spokeAngularSegs;
       const radialRow: { bot: number; top: number }[] = [];
-
       for (let r = 0; r <= SPOKE_RADIAL_STEPS; r++) {
-        const radialT = r / SPOKE_RADIAL_STEPS; // 0 at hub, 1 at wall
-
-        // Spoke width: interpolate between wall width and hub width, plus arch widening
-        const archT = Math.sin((1 - radialT) * Math.PI / 2); // 1 at hub, 0 at wall
-        const baseWidth = wallWidthRad + (spokeWidthRad - wallWidthRad) * (1 - radialT);
-        const widthAtR = baseWidth + 2 * maxExtraWidth * archT;
-
-        // Theta position: interpolate across current width
-        const startTheta = spokeCenterTheta - widthAtR / 2;
-        const theta = startTheta + angularT * widthAtR;
-
+        const radialT = r / SPOKE_RADIAL_STEPS;
+        const widthAtR = (wallWidthRad + (spokeWidthRad - wallWidthRad) * (1 - radialT)) + 2 * maxExtraWidth * Math.sin((1 - radialT) * Math.PI / 2);
+        const theta = spokeCenterTheta - widthAtR / 2 + angularT * widthAtR;
         if (r === 0) {
-          // Directly reference hub outer ring vertices for watertight mesh.
-          // The old approach created separate vertices and stitched via index-rounding,
-          // which left tiny gaps making the mesh non-manifold.
-          const jRaw = Math.round((theta / (2 * Math.PI)) * hubSegments);
-          const j = ((jRaw % hubSegments) + hubSegments) % hubSegments;
-          radialRow.push({ bot: hubOuterBot[j], top: hubOuterTop[j] });
+          const normTheta = ((theta % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+          const hubIdx = Math.round(normTheta / (2 * Math.PI) * hubSegments) % hubSegments;
+          radialRow.push({ bot: hubOuterBot[hubIdx], top: hubOuterTop[hubIdx] });
+          indicesUsed.add(hubIdx);
           continue;
         }
-
-        const cosT = Math.cos(theta);
-        const sinT = Math.sin(theta);
-
-        // Wall attachment at fixed height — direct radius lookup (no scanning needed)
         const wallR = Math.max(wallRadiusAtY(wallAttachY, theta), hubOuterR + 0.3);
-
-        // Interpolate from hub outer edge to wall attachment
         const rPos = hubOuterR + (wallR - hubOuterR) * radialT;
         const yPos = clampedHubOuterY + (wallAttachY - clampedHubOuterY) * radialT;
-
-        const bot = addVertex(rPos * cosT, yPos, rPos * sinT);
-        const top = addVertex(rPos * cosT, yPos + hubThickness, rPos * sinT);
-
-        radialRow.push({ bot, top });
+        const cosT = Math.cos(theta), sinT = Math.sin(theta);
+        radialRow.push({ bot: addVertex(rPos * cosT, yPos, rPos * sinT), top: addVertex(rPos * cosT, yPos + hubThickness, rPos * sinT) });
       }
-
       spokeGrid.push(radialRow);
     }
+    spokeGrids.push(spokeGrid);
 
-    // Pre-compute elliptical cutout mask for this spoke
-    // Enforce 2mm minimum solid margin around the cutout
+    // Compute cutout mask
     const minPhysicalWidth = Math.min(spokeWidthMm, spokeWallWidthMm);
-    const maxHollowForMargin = minPhysicalWidth > 4
-      ? (1 - 4 / minPhysicalWidth) / 0.82   // 2mm on each side
-      : 0;                                     // spoke too narrow for any cutout
-    const effectiveHollow = Math.min(spokeHollow, maxHollowForMargin);
-
+    const effectiveHollow = Math.min(spokeHollow, minPhysicalWidth > 4 ? (1 - 4 / minPhysicalWidth) / 0.82 : 0);
     const cutoutMask: boolean[][] = [];
     if (effectiveHollow > 0) {
       for (let s = 0; s < spokeAngularSegs; s++) {
         cutoutMask[s] = [];
         for (let r = 0; r < SPOKE_RADIAL_STEPS; r++) {
-          // Cell center in [-1, 1] normalized spoke space
-          const u = ((s + 0.5) / spokeAngularSegs - 0.5) * 2;
-          const v = ((r + 0.5) / SPOKE_RADIAL_STEPS - 0.5) * 2;
-
-          // Ellipse size leaves structural margins on all sides
+          const u = ((s + 0.5) / spokeAngularSegs - 0.5) * 2, v = ((r + 0.5) / SPOKE_RADIAL_STEPS - 0.5) * 2;
           const size = effectiveHollow * 0.82;
-          if (size <= 0) { cutoutMask[s][r] = false; continue; }
-
-          // Slightly elongated radially for a leaf shape
-          const ex = u / size;
-          const ey = v / (size * 1.15);
-          cutoutMask[s][r] = (ex * ex + ey * ey) < 1;
+          cutoutMask[s][r] = size > 0 && (u/size)**2 + (v/(size*1.15))**2 < 1;
         }
       }
     }
+    spokeCutoutMasks.push(cutoutMask);
 
-    // Build spoke faces (with cutout support)
+    // Mark spoke regions on hub
+    const sorted = Array.from(indicesUsed).sort((a, b) => a - b);
+    const isWrapped = sorted.length > 1 && (sorted[sorted.length - 1] - sorted[0] > hubSegments / 2);
+    if (!isWrapped) { for (let j = sorted[0]; j < sorted[sorted.length - 1]; j++) inSpokeRegion[j] = 1; }
+    else {
+      let b = 0; for (let i = 0; i < sorted.length - 1; i++) if (sorted[i + 1] - sorted[i] > 1) { b = i; break; }
+      for (let j = sorted[b + 1]; j < hubSegments; j++) inSpokeRegion[j] = 1;
+      for (let j = 0; j < sorted[b]; j++) inSpokeRegion[j] = 1;
+    }
+  }
+
+  // --- Emit hub ring faces with correct outward normals ---
+  // Winding: addQuad(a,b,c,d) → tris (a,b,c)+(a,c,d), CCW from normal side
+  for (let j = 0; j < hubSegments; j++) {
+    const n = (j + 1) % hubSegments;
+    // 1. Inner wall (normal toward center)
+    addQuad(hubInnerBot[j], hubInnerBot[n], hubInnerTop[n], hubInnerTop[j]);
+    // 2. Top inner shelf (normal +Y)
+    addQuad(rimInnerTop[j], hubInnerTop[j], hubInnerTop[n], rimInnerTop[n]);
+    // 3. Top middle cone (normal +Y)
+    addQuad(rimOuterTop[j], rimInnerTop[j], rimInnerTop[n], rimOuterTop[n]);
+    // 4. Top outer shelf (normal +Y)
+    addQuad(hubOuterTop[j], rimOuterTop[j], rimOuterTop[n], hubOuterTop[n]);
+    // 5. Outer wall — GAP ONLY (normal outward)
+    if (!inSpokeRegion[j]) {
+      addQuad(hubOuterBot[j], hubOuterTop[j], hubOuterTop[n], hubOuterBot[n]);
+    }
+    // 6. Bottom outer shelf (normal -Y)
+    addQuad(hubOuterBot[j], hubOuterBot[n], rimOuterBot[n], rimOuterBot[j]);
+    // 7. Bottom middle cone (normal -Y)
+    addQuad(rimOuterBot[j], rimOuterBot[n], rimInnerBot[n], rimInnerBot[j]);
+    // 8. Bottom inner shelf (normal -Y)
+    addQuad(rimInnerBot[j], rimInnerBot[n], hubInnerBot[n], hubInnerBot[j]);
+  }
+
+  // --- Socket tube (independent solid overlapping hub ring) ---
+  const hasSocket = socketDepth > 0;
+  if (hasSocket) {
+    const effectiveSocketWall = Math.max(0.2, socketWall);
+    const tubeOuterR = Math.min(holeRadius + effectiveSocketWall, hubOuterR - 0.2);
+    const tubeEndY = hubInnerY + slopeSign * socketDepth;
+    const tubeOverlapY = hubInnerY + 0.02;
+    const hasChamfer = socketChamferAngle > 0 && socketChamferDepth > 0;
+    const chamferWidth = hasChamfer ? socketChamferDepth * Math.tan(socketChamferAngle * Math.PI / 180) : 0;
+    const chamferTopR = hasChamfer ? Math.min(holeRadius + chamferWidth, tubeOuterR - 0.2) : holeRadius;
+    const chamferBotY = hasChamfer ? tubeOverlapY + slopeSign * Math.min(socketChamferDepth, socketDepth * 0.9) : tubeOverlapY;
+
+    const tubeEndIn: number[] = [], tubeEndOut: number[] = [], tubeCapOut: number[] = [], tubeCapIn: number[] = [], chamTop: number[] = [], chamBot: number[] = [];
+    for (let j = 0; j < hubSegments; j++) {
+      const theta = (j / hubSegments) * Math.PI * 2;
+      const cosT = Math.cos(theta), sinT = Math.sin(theta);
+      tubeEndIn.push(addVertex(holeRadius * cosT, tubeEndY, holeRadius * sinT));
+      tubeEndOut.push(addVertex(tubeOuterR * cosT, tubeEndY, tubeOuterR * sinT));
+      tubeCapOut.push(addVertex(tubeOuterR * cosT, tubeOverlapY, tubeOuterR * sinT));
+      if (hasChamfer) { chamTop.push(addVertex(chamferTopR * cosT, tubeOverlapY, chamferTopR * sinT)); chamBot.push(addVertex(holeRadius * cosT, chamferBotY, holeRadius * sinT)); }
+      else { tubeCapIn.push(addVertex(holeRadius * cosT, tubeOverlapY, holeRadius * sinT)); }
+    }
+
+    // Socket tube winding: use actual Y positions to determine "lower" vs "upper" ring.
+    // Inner wall (normal toward center): from center, CCW is lowerY[j] → lowerY[n] → upperY[n] → upperY[j]
+    // Outer wall (normal outward): from outside, CCW is lowerY[j] → upperY[j] → upperY[n] → lowerY[n]
+    // End cap / overlap cap: horizontal face, normal determined by whether it faces +Y or -Y.
+
+    for (let j = 0; j < hubSegments; j++) {
+      const n = (j + 1) % hubSegments;
+      if (hasChamfer) {
+        if (slopeSign < 0) {
+          // Not flipped: tubeEndY < tubeOverlapY (end below, overlap above)
+          // chamBot < chamTop in Y, tubeEndIn at bottom
+          // Inner wall chamfer: normal inward, lower=chamBot, upper=chamTop
+          addQuad(chamBot[j], chamBot[n], chamTop[n], chamTop[j]);
+          // Inner wall tube section: lower=tubeEndIn, upper=chamBot
+          addQuad(tubeEndIn[j], tubeEndIn[n], chamBot[n], chamBot[j]);
+          // Outer wall: lower=tubeEndOut, upper=tubeCapOut
+          addQuad(tubeEndOut[j], tubeCapOut[j], tubeCapOut[n], tubeEndOut[n]);
+          // End cap: faces -Y (outward, bottom)
+          addQuad(tubeEndOut[j], tubeEndOut[n], tubeEndIn[n], tubeEndIn[j]);
+          // Overlap cap: faces +Y (outward, top)
+          addQuad(tubeCapOut[j], chamTop[j], chamTop[n], tubeCapOut[n]);
+        } else {
+          // Flipped: tubeEndY > tubeOverlapY (end above, overlap below)
+          // chamBotY > tubeOverlapY, and chamTop is at tubeOverlapY (lower Y than chamBot!)
+          // Inner wall chamfer: normal inward, lower=chamTop, upper=chamBot
+          addQuad(chamTop[j], chamTop[n], chamBot[n], chamBot[j]);
+          // Inner wall tube section: lower=chamBot is wrong — tubeEndIn is ABOVE chamBot
+          // lower=chamBot, upper=tubeEndIn (chamBotY < tubeEndY)
+          addQuad(chamBot[j], chamBot[n], tubeEndIn[n], tubeEndIn[j]);
+          // Outer wall: lower=tubeCapOut (at overlapY), upper=tubeEndOut (at endY)
+          addQuad(tubeCapOut[j], tubeEndOut[j], tubeEndOut[n], tubeCapOut[n]);
+          // End cap: faces +Y (outward, top)
+          addQuad(tubeEndOut[j], tubeEndIn[j], tubeEndIn[n], tubeEndOut[n]);
+          // Overlap cap: faces -Y (outward, bottom)
+          addQuad(tubeCapOut[j], tubeCapOut[n], chamTop[n], chamTop[j]);
+        }
+      } else {
+        if (slopeSign < 0) {
+          // Not flipped: tubeEndY < tubeOverlapY
+          // Inner wall: lower=tubeEndIn, upper=tubeCapIn
+          addQuad(tubeEndIn[j], tubeEndIn[n], tubeCapIn[n], tubeCapIn[j]);
+          // Outer wall: lower=tubeEndOut, upper=tubeCapOut
+          addQuad(tubeEndOut[j], tubeCapOut[j], tubeCapOut[n], tubeEndOut[n]);
+          // End cap: -Y (bottom)
+          addQuad(tubeEndOut[j], tubeEndOut[n], tubeEndIn[n], tubeEndIn[j]);
+          // Top cap: +Y (top)
+          addQuad(tubeCapOut[j], tubeCapIn[j], tubeCapIn[n], tubeCapOut[n]);
+        } else {
+          // Flipped: tubeEndY > tubeOverlapY
+          // Inner wall: lower=tubeCapIn, upper=tubeEndIn
+          addQuad(tubeCapIn[j], tubeCapIn[n], tubeEndIn[n], tubeEndIn[j]);
+          // Outer wall: lower=tubeCapOut, upper=tubeEndOut
+          addQuad(tubeCapOut[j], tubeEndOut[j], tubeEndOut[n], tubeCapOut[n]);
+          // End cap: +Y (top)
+          addQuad(tubeEndOut[j], tubeEndIn[j], tubeEndIn[n], tubeEndOut[n]);
+          // Overlap cap: -Y (bottom)
+          addQuad(tubeCapOut[j], tubeCapOut[n], tubeCapIn[n], tubeCapIn[j]);
+        }
+      }
+    }
+  }
+
+  // --- Emit spoke faces ---
+  // Spoke grid: s = angular index (0..spokeAngularSegs), r = radial index (0..SPOKE_RADIAL_STEPS)
+  // r=0 is at hub outer edge, r=SPOKE_RADIAL_STEPS is at wall (spoke tip)
+  // s increases CCW (same direction as hub theta)
+  //
+  // Top face (normal +Y): CCW from +Y → s increases leftward viewed from +Y at angle θ
+  //   For quad at (s,r): corners are grid[s][r], grid[s+1][r], grid[s+1][r+1], grid[s][r+1]
+  //   CCW from +Y: grid[s][r].top → grid[s+1][r].top → grid[s+1][r+1].top → grid[s][r+1].top
+  //
+  // Bottom face (normal -Y): CCW from -Y (CW from +Y)
+  //   grid[s][r].bot → grid[s][r+1].bot → grid[s+1][r+1].bot → grid[s+1][r].bot
+
+  for (let k = 0; k < spokeCount; k++) {
+    const spokeGrid = spokeGrids[k];
+    const cutoutMask = spokeCutoutMasks[k];
+    const spokeAngularSegs = spokeAngularSegsList[k];
+    const minPhysicalWidth = Math.min(spokeWidthMm, spokeWallWidthMm);
+    const effectiveHollow = Math.min(spokeHollow, minPhysicalWidth > 4 ? (1 - 4 / minPhysicalWidth) / 0.82 : 0);
+
     for (let s = 0; s < spokeAngularSegs; s++) {
       for (let r = 0; r < SPOKE_RADIAL_STEPS; r++) {
-        const isCut = effectiveHollow > 0 && cutoutMask[s]?.[r];
-
-        if (isCut) {
-          // Add inner walls at cutout boundary for watertight mesh
-          const leftSolid = s === 0 || !cutoutMask[s - 1][r];
-          const rightSolid = s === spokeAngularSegs - 1 || !cutoutMask[s + 1]?.[r];
-          const hubSolid = r === 0 || !cutoutMask[s][r - 1];
-          const wallSolid = r === SPOKE_RADIAL_STEPS - 1 || !cutoutMask[s][r + 1];
-
-          // Left inner wall (normal points right, into cutout)
-          if (leftSolid) {
-            addQuad(
-              spokeGrid[s][r].top, spokeGrid[s][r + 1].top,
-              spokeGrid[s][r + 1].bot, spokeGrid[s][r].bot
-            );
+        if (effectiveHollow > 0 && cutoutMask[s] && cutoutMask[s][r]) {
+          // Cutout boundary walls — these face INTO the cutout hole
+          // s-side wall (s boundary, looking from lower s into cutout): normal points in -s direction
+          if (s === 0 || !cutoutMask[s-1][r]) {
+            // Wall at s=s, from r to r+1. Normal faces toward lower s (inward to cutout from -s side).
+            // Viewed from -s direction: r increases rightward, top is up
+            // CCW: bot_r → bot_r+1 → top_r+1 → top_r
+            addQuad(spokeGrid[s][r].bot, spokeGrid[s][r+1].bot, spokeGrid[s][r+1].top, spokeGrid[s][r].top);
           }
-          // Right inner wall (normal points left, into cutout)
-          if (rightSolid) {
-            addQuad(
-              spokeGrid[s + 1][r].bot, spokeGrid[s + 1][r + 1].bot,
-              spokeGrid[s + 1][r + 1].top, spokeGrid[s + 1][r].top
-            );
+          // s+1-side wall (looking from higher s into cutout): normal points in +s direction
+          if (s === spokeAngularSegs-1 || !cutoutMask[s+1][r]) {
+            addQuad(spokeGrid[s+1][r+1].bot, spokeGrid[s+1][r].bot, spokeGrid[s+1][r].top, spokeGrid[s+1][r+1].top);
           }
-          // Hub-side inner wall (normal points toward wall, into cutout)
-          if (hubSolid) {
-            addQuad(
-              spokeGrid[s][r].bot, spokeGrid[s + 1][r].bot,
-              spokeGrid[s + 1][r].top, spokeGrid[s][r].top
-            );
+          // r-side wall (at r boundary, looking from lower r into cutout): normal faces toward lower r
+          if (r === 0 || !cutoutMask[s][r-1]) {
+            addQuad(spokeGrid[s+1][r].bot, spokeGrid[s][r].bot, spokeGrid[s][r].top, spokeGrid[s+1][r].top);
           }
-          // Wall-side inner wall (normal points toward hub, into cutout)
-          if (wallSolid) {
-            addQuad(
-              spokeGrid[s][r + 1].top, spokeGrid[s + 1][r + 1].top,
-              spokeGrid[s + 1][r + 1].bot, spokeGrid[s][r + 1].bot
-            );
+          // r+1-side wall (looking from higher r into cutout): normal faces toward higher r
+          if (r === SPOKE_RADIAL_STEPS-1 || !cutoutMask[s][r+1]) {
+            addQuad(spokeGrid[s][r+1].bot, spokeGrid[s+1][r+1].bot, spokeGrid[s+1][r+1].top, spokeGrid[s][r+1].top);
           }
-          continue; // Skip top/bottom faces for cutout cells
+          continue;
         }
-
-        // Solid cell — build top/bottom faces as normal
-        // Bottom face (faces down)
-        addQuad(
-          spokeGrid[s][r].bot, spokeGrid[s + 1][r].bot,
-          spokeGrid[s + 1][r + 1].bot, spokeGrid[s][r + 1].bot,
-          true
-        );
-        // Top face (faces up)
-        addQuad(
-          spokeGrid[s][r].top, spokeGrid[s + 1][r].top,
-          spokeGrid[s + 1][r + 1].top, spokeGrid[s][r + 1].top
-        );
+        // Normal spoke quad
+        if (r === 0 && spokeGrid[s][0].bot === spokeGrid[s+1][0].bot) {
+          // Degenerate at r=0 (same hub vertex) — emit triangles
+          // Bottom tri: hub_bot → grid[s+1][1].bot → grid[s][1].bot (normal -Y)
+          addTri(spokeGrid[s][0].bot, spokeGrid[s][1].bot, spokeGrid[s+1][1].bot);
+          // Top tri: hub_top → grid[s+1][1].top → grid[s][1].top (normal +Y)
+          addTri(spokeGrid[s][0].top, spokeGrid[s+1][1].top, spokeGrid[s][1].top);
+        } else {
+          // Bottom face (normal -Y): CW from +Y
+          addQuad(spokeGrid[s][r].bot, spokeGrid[s][r+1].bot, spokeGrid[s+1][r+1].bot, spokeGrid[s+1][r].bot);
+          // Top face (normal +Y): CCW from +Y
+          addQuad(spokeGrid[s][r].top, spokeGrid[s+1][r].top, spokeGrid[s+1][r+1].top, spokeGrid[s][r+1].top);
+        }
       }
     }
 
-    // Left side wall (s = 0) - simple vertical wall along spoke edge
+    // Spoke side walls (s=0 and s=spokeAngularSegs edges)
+    // At s=0: normal faces toward -s (lower theta, away from spoke).
+    // At s=spokeAngularSegs: normal faces toward +s (higher theta, away from spoke).
+    // These must be consistent with adjacent gap wall and spoke top/bottom faces.
+    // s=0 wall: top[r] → top[r+1] → bot[r+1] → bot[r]
+    // s=max wall: bot[r] → bot[r+1] → top[r+1] → top[r]
     for (let r = 0; r < SPOKE_RADIAL_STEPS; r++) {
-      addQuad(
-        spokeGrid[0][r].bot, spokeGrid[0][r + 1].bot,
-        spokeGrid[0][r + 1].top, spokeGrid[0][r].top
-      );
+      addQuad(spokeGrid[0][r].top, spokeGrid[0][r+1].top, spokeGrid[0][r+1].bot, spokeGrid[0][r].bot);
+      addQuad(spokeGrid[spokeAngularSegs][r].bot, spokeGrid[spokeAngularSegs][r+1].bot, spokeGrid[spokeAngularSegs][r+1].top, spokeGrid[spokeAngularSegs][r].top);
     }
 
-    // Right side wall (s = spokeAngularSegs) - simple vertical wall
-    for (let r = 0; r < SPOKE_RADIAL_STEPS; r++) {
-      addQuad(
-        spokeGrid[spokeAngularSegs][r + 1].bot, spokeGrid[spokeAngularSegs][r].bot,
-        spokeGrid[spokeAngularSegs][r].top, spokeGrid[spokeAngularSegs][r + 1].top
-      );
-    }
-
-    // Spoke tip cap (at wall)
+    // Spoke tip wall (at r=SPOKE_RADIAL_STEPS): normal faces outward (toward higher r, away from center)
+    // This is like outer wall — CCW from outside (higher r)
+    // Viewed from outside: s increases leftward (CCW from +Y), top is up
+    // CCW: bot[s] → top[s] → top[s+1] → bot[s+1]
     for (let s = 0; s < spokeAngularSegs; s++) {
-      addQuad(
-        spokeGrid[s][SPOKE_RADIAL_STEPS].bot, spokeGrid[s + 1][SPOKE_RADIAL_STEPS].bot,
-        spokeGrid[s + 1][SPOKE_RADIAL_STEPS].top, spokeGrid[s][SPOKE_RADIAL_STEPS].top,
-        true
-      );
-    }
-
-    // Hub connection: spoke r=0 vertices directly reference hubOuterBot/Top,
-    // so the spoke faces seamlessly share edges with the hub ring faces.
-    // No stitching quads needed — topology is watertight by construction.
-  }
-
-  // ============================================
-  // STEP 4: Close any remaining gaps at hub outer edge
-  // ============================================
-  // When archDepthFactor < 1, spokes don't fully meet.
-  // Close the remaining gap with a simple vertical wall.
-
-  if (archDepthFactor < 0.99) {
-    const remainingGapWidth = gapWidthAtWall * (1 - archDepthFactor);
-
-    for (let k = 0; k < spokeCount; k++) {
-      const thisSpokeCenterTheta = k * spokeStep;
-      const nextSpokeCenterTheta = ((k + 1) % spokeCount) * spokeStep;
-
-      // Gap at hub level (after widening)
-      const thisWidenedEnd = thisSpokeCenterTheta + spokeWidthRad / 2 + maxExtraWidth;
-      let nextWidenedStart = nextSpokeCenterTheta - spokeWidthRad / 2 - maxExtraWidth;
-      if (nextWidenedStart < thisWidenedEnd) nextWidenedStart += 2 * Math.PI;
-
-      const gapStart = thisWidenedEnd;
-      const gapEnd = nextWidenedStart;
-      const gapWidth = gapEnd - gapStart;
-
-      if (gapWidth < 0.01) continue; // Gap is closed
-
-      // Close with vertical wall at hub outer edge
-      const GAP_SEGS = Math.max(2, Math.ceil((gapWidth / (2 * Math.PI)) * hubSegments));
-
-      for (let g = 0; g < GAP_SEGS; g++) {
-        const thetaA = gapStart + (g / GAP_SEGS) * gapWidth;
-        const thetaB = gapStart + ((g + 1) / GAP_SEGS) * gapWidth;
-
-        const jA = ((Math.round((thetaA / (2 * Math.PI)) * hubSegments) % hubSegments) + hubSegments) % hubSegments;
-        const jB = ((Math.round((thetaB / (2 * Math.PI)) * hubSegments) % hubSegments) + hubSegments) % hubSegments;
-
-        if (jA !== jB) {
-          // Vertical wall from bottom to top at hub outer edge
-          addQuad(hubOuterBot[jA], hubOuterBot[jB], hubOuterTop[jB], hubOuterTop[jA]);
-        }
-      }
+      addQuad(spokeGrid[s][SPOKE_RADIAL_STEPS].bot, spokeGrid[s][SPOKE_RADIAL_STEPS].top, spokeGrid[s+1][SPOKE_RADIAL_STEPS].top, spokeGrid[s+1][SPOKE_RADIAL_STEPS].bot);
     }
   }
 
-  return { vertices, indices };
+  return { vertices, indices, colors };
 }
 
-/**
- * Create a THREE.js BufferGeometry from suspension result.
- */
 export function createSuspensionGeometry(result: SuspensionResult): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(result.vertices, 3));
+  if (result.colors.length > 0) geometry.setAttribute('color', new THREE.Float32BufferAttribute(result.colors, 3));
   geometry.setIndex(result.indices);
   const merged = mergeVertices(geometry, 1e-4);
   merged.computeVertexNormals();
   return merged;
 }
 
-/**
- * Helper to create config from DesignParams.
- * Bridges the isolated module to the main app.
- */
-export function createConfigFromParams(
-  params: DesignParams,
-  getWallInnerRadius: (y: number, theta: number) => number
-): SuspensionConfig {
+export function createConfigFromParams(params: DesignParams, getWallInnerRadius: (y: number, theta: number) => number): SuspensionConfig {
   return {
     centerY: params.height * params.suspensionHeight,
     holeRadius: params.suspensionHoleSize / 2,
     hubWidth: params.suspensionRimWidth,
-    hubThickness: Math.max(0.2, params.suspensionThickness), // Min 2mm
+    hubThickness: Math.max(0.2, params.suspensionThickness),
     spokeCount: params.suspensionRibCount,
-    spokeWidthMm: params.suspensionRibWidth, // Width at hub in mm
-    spokeWallWidthMm: params.suspensionWallWidth ?? params.suspensionRibWidth, // Width at wall in mm
+    spokeWidthMm: params.suspensionRibWidth,
+    spokeWallWidthMm: params.suspensionWallWidth ?? params.suspensionRibWidth,
     spokeAngle: Math.max(MIN_SELF_SUPPORTING_ANGLE, params.suspensionAngle),
-    archDepthFactor: params.suspensionArchPower, // 0-1 arch depth
-    flipped: params.suspensionFlipped, // Flip spoke direction
-    spokeHollow: params.spokeHollow ?? 0, // 0-1 cutout
+    archDepthFactor: params.suspensionArchPower,
+    flipped: params.suspensionFlipped,
+    spokeHollow: params.spokeHollow ?? 0,
     socketDepth: params.suspensionSocketDepth ?? 0,
-    socketWall: Math.max(0.2, params.suspensionSocketWall ?? 0.2), // 2mm min for FDM
+    socketWall: Math.max(0.2, params.suspensionSocketWall ?? 0.2),
     socketChamferAngle: params.suspensionSocketChamferAngle ?? 0,
     socketChamferDepth: params.suspensionSocketChamferDepth ?? 0.2,
     wallRadiusAtY: getWallInnerRadius,
