@@ -172,6 +172,50 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
     addQuad(indices, a, b, c, d, flipped);
   };
 
+  // --- Pre-compute spoke skip regions for inner wall face culling ---
+  // When suspension is enabled (shade mode), spoke tips connect to the body inner wall.
+  // We skip inner wall faces in spoke regions so merged spoke tip vertices create a
+  // single manifold shell instead of overlapping separate shells.
+  let innerWallSkipSet: Set<string> | null = null;
+  if (mode !== 'pot' && params.enableSuspension) {
+    innerWallSkipSet = new Set<string>();
+    const wallAttachY_s = Math.max(0.5, Math.min(height - 0.5, height * params.suspensionHeight));
+    const thick_s = Math.max(0.2, params.suspensionThickness);
+    const holeR_s = params.suspensionHoleSize / 2;
+    const hubWidth_s = params.suspensionRimWidth;
+    const hubOuterR_s = holeR_s + hubWidth_s;
+    const pAtWall = calculatePointData(wallAttachY_s, 0, params);
+    const repWallR_s = Math.max(0.01, pAtWall.r - thickness);
+    const wallWidthRad_s = (params.suspensionWallWidth ?? params.suspensionRibWidth) / (repWallR_s * 10);
+    const spokeCount_s = params.suspensionRibCount;
+    const spokeStep_s = 2 * Math.PI / spokeCount_s;
+    const bodyThetaStep = 2 * Math.PI / radialSegments;
+    const bodyYStep = (innerTopY - innerBottomY) / heightSegments;
+    const skipIBot = Math.max(0, Math.min(heightSegments, Math.round((wallAttachY_s - innerBottomY) / bodyYStep)));
+    const skipITop = Math.max(skipIBot + 1, Math.min(heightSegments, Math.round((wallAttachY_s + thick_s - innerBottomY) / bodyYStep)));
+
+    for (let k = 0; k < spokeCount_s; k++) {
+      const center = k * spokeStep_s;
+      const minTheta = center - wallWidthRad_s / 2;
+      const maxTheta = center + wallWidthRad_s / 2;
+      let jMin = Math.round(minTheta / bodyThetaStep);
+      let jMax = Math.round(maxTheta / bodyThetaStep);
+      // Normalize to [0, radialSegments)
+      jMin = ((jMin % radialSegments) + radialSegments) % radialSegments;
+      jMax = ((jMax % radialSegments) + radialSegments) % radialSegments;
+
+      for (let i = skipIBot; i < skipITop; i++) {
+        if (jMin <= jMax) {
+          for (let j = jMin; j < jMax; j++) innerWallSkipSet.add(`${i},${j}`);
+        } else {
+          // Wrapping around theta=0
+          for (let j = jMin; j < radialSegments; j++) innerWallSkipSet.add(`${i},${j}`);
+          for (let j = 0; j < jMax; j++) innerWallSkipSet.add(`${i},${j}`);
+        }
+      }
+    }
+  }
+
   // Pierce threshold for face culling
   const pierceThreshold = 0.5;
 
@@ -197,9 +241,12 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
     }
   }
 
-  // Inner Faces
+  // Inner Faces (skip faces in spoke attachment regions when suspension enabled)
   for (let i = 0; i < heightSegments; i++) {
     for (let j = 0; j < radialSegments; j++) {
+      // Skip inner wall faces where spoke tips connect (creates holes for spoke-body integration)
+      if (innerWallSkipSet?.has(`${i},${j}`)) continue;
+
       const row1 = i * cols + j;
       const row2 = (i + 1) * cols + j;
 
@@ -261,6 +308,8 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
       };
 
       const hubConfig = createConfigFromParams(params, getWallInnerRadius);
+      // Pass body inner wall grid info for spoke-body topological integration
+      hubConfig.bodyGridInfo = { innerBottomY, innerTopY, heightSegments };
       const hubResult = generateSuspensionHub(hubConfig, radialSegments);
 
       // Append hub vertices (offset indices by current vertex count)
@@ -274,6 +323,32 @@ export const generateBodyGeometry = (params: DesignParams): THREE.BufferGeometry
       for (let i = 0; i < hubResult.indices.length; i++) {
         indices.push(hubResult.indices[i] + hubVertexOffset);
       }
+
+      // Build vertex colors: body=user color, hub=per-element colors
+      const totalVerts = vertexIndex;
+      const colorArr = new Float32Array(totalVerts * 3);
+
+      // Convert user hex color to RGB
+      const bodyColor = new THREE.Color(params.color);
+
+      // Body vertices: user color
+      for (let i = 0; i < hubVertexOffset; i++) {
+        colorArr[i * 3] = bodyColor.r;
+        colorArr[i * 3 + 1] = bodyColor.g;
+        colorArr[i * 3 + 2] = bodyColor.b;
+      }
+      // Hub vertices: per-element colors from hub result
+      for (let i = 0; i < hubResult.colors.length; i++) {
+        colorArr[hubVertexOffset * 3 + i] = hubResult.colors[i];
+      }
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+      geometry.setAttribute('color', new THREE.BufferAttribute(colorArr, 3));
+      geometry.setIndex(indices);
+      const merged = mergeVertices(geometry, 1e-4);
+      merged.computeVertexNormals();
+      return merged;
     }
   }
 
@@ -687,10 +762,34 @@ function generateKumikoBodyGeometry(params: DesignParams): THREE.BufferGeometry 
       for (const idx of hubResult.indices) {
         indices.push(idx + hubVertexOffset);
       }
+
+      // Build vertex colors: body=user color, hub=per-element colors
+      const totalVerts = vertexIndex;
+      const colorArr = new Float32Array(totalVerts * 3);
+
+      // Convert user hex color to RGB
+      const bodyColor = new THREE.Color(params.color);
+
+      for (let i = 0; i < hubVertexOffset; i++) {
+        colorArr[i * 3] = bodyColor.r;
+        colorArr[i * 3 + 1] = bodyColor.g;
+        colorArr[i * 3 + 2] = bodyColor.b;
+      }
+      for (let i = 0; i < hubResult.colors.length; i++) {
+        colorArr[hubVertexOffset * 3 + i] = hubResult.colors[i];
+      }
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+      geometry.setAttribute('color', new THREE.BufferAttribute(colorArr, 3));
+      geometry.setIndex(indices);
+      const merged = mergeVertices(geometry, 1e-4);
+      merged.computeVertexNormals();
+      return merged;
     }
   }
 
-  // Build geometry
+  // Build geometry (no hub — no vertex colors needed)
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
   geometry.setIndex(indices);

@@ -78,10 +78,14 @@ const Model: React.FC<{ params: DesignParams }> = ({ params }) => {
         />
       );
     }
+    // Check if geometry has vertex colors (hub debug mode)
+    const hasVertexColors = bodyGeometry?.getAttribute('color') != null;
+
     // Solid Opaque Material (Better for production use)
     return (
       <meshPhysicalMaterial
-        color={params.color}
+        color={hasVertexColors ? '#ffffff' : params.color}
+        vertexColors={hasVertexColors}
         wireframe={false}
         side={THREE.DoubleSide}
         flatShading={false}
